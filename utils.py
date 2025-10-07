@@ -12,6 +12,12 @@ from datetime import datetime, timezone
 from config import REQUEST_TIMEOUT, LOG_FILE
 
 # -------------------------
+# Global Binance endpoint (region-safe)
+# -------------------------
+BINANCE_BASE_URL = os.getenv("BINANCE_BASE_URL", "https://data-api.binance.vision")
+
+
+# -------------------------
 # Fetch candlesticks from Binance public API
 # -------------------------
 def fetch_binance_klines(symbol: str, interval: str, limit: int = 500) -> pd.DataFrame:
@@ -20,7 +26,7 @@ def fetch_binance_klines(symbol: str, interval: str, limit: int = 500) -> pd.Dat
     Returns DataFrame with columns: ['timestamp','open','high','low','close','volume'].
     On error returns empty DataFrame.
     """
-    url = "https://api.binance.com/api/v3/klines"
+    url = f"{BINANCE_BASE_URL}/api/v3/klines"
     params = {"symbol": symbol, "interval": interval, "limit": limit}
     try:
         resp = requests.get(url, params=params, timeout=REQUEST_TIMEOUT)
