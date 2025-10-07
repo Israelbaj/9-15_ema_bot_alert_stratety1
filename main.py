@@ -1,24 +1,22 @@
 """
 main.py
-
-Orchestrator:
- - loops over COINS
+Single-run orchestrator:
+ - loops over COINS once per execution
  - uses strategy.check_strategy to evaluate each
  - journals results (CSV)
  - sends Telegram alert for matches
 """
 
+from datetime import datetime, timezone
 import time
+import sys
 from config import COINS, CHECK_INTERVAL, JOURNAL_FILE
 from strategy import check_strategy
 from utils import append_journal, log_error
 from alert import send_telegram
-from datetime import datetime, timezone
-import json
-import sys
+
 
 def format_alert(rec: dict) -> str:
-    """Format a readable HTML message for Telegram from the rec dict."""
     s = rec["signal"]
     return (
         f"🔔 <b>{rec['symbol']}</b> — <b>{s}</b>\n"
@@ -31,47 +29,46 @@ def format_alert(rec: dict) -> str:
         f"ADX strength: {rec.get('adx_strength')}\n"
     )
 
+
 def main():
-    print("🚀 EMA+ADX Multi-Coin Scanner Starting...")
+    print("🚀 EMA+ADX Multi-Coin Scanner (Single Run)")
     print(f"🧭 Tracking coins: {', '.join(COINS)}")
-    print(f"⏱️  Interval between scans: {CHECK_INTERVAL} seconds")
-    sys.stdout.flush()  # ensure GitHub Actions shows these immediately
+    print(f"🕒 Started at: {datetime.now(timezone.utc).isoformat()} UTC\n")
+    sys.stdout.flush()
 
-    while True:
-        cycle_start = time.time()
-        print(f"\n🔁 Starting new scan cycle at {datetime.now(timezone.utc).isoformat()} UTC")
-        sys.stdout.flush()
+    cycle_start = time.time()
 
-        for coin in COINS:
-            try:
-                print(f"🔍 Checking {coin} ...")
-                sys.stdout.flush()
+    for coin in COINS:
+        try:
+            print(f"🔍 Checking {coin} ...")
+            sys.stdout.flush()
 
-                rec = check_strategy(coin)
-                if rec:
-                    append_journal(JOURNAL_FILE, rec)
+            rec = check_strategy(coin)
 
-                    msg = format_alert(rec)
-                    ok = send_telegram(msg)
-                    if not ok:
-                        log_error(f"Telegram failed for {coin} (signal={rec['signal']})")
+            if rec:
+                append_journal(JOURNAL_FILE, rec)
+                msg = format_alert(rec)
+                ok = send_telegram(msg)
 
-                    print(f"[{datetime.now(timezone.utc).isoformat()}] ✅ SIGNAL {coin} -> {rec['signal']}")
-                    sys.stdout.flush()
+                if ok:
+                    print(f"📩 Telegram alert sent for {coin} ({rec['signal']})")
                 else:
-                    print(f"⚪ No signal for {coin}")
-                    sys.stdout.flush()
+                    log_error(f"Telegram failed for {coin} (signal={rec['signal']})")
 
-            except Exception as e:
-                log_error(f"Main loop error for {coin}: {repr(e)}")
-                print(f"❌ Error while processing {coin}: {repr(e)}")
-                sys.stdout.flush()
+                print(f"[{datetime.now(timezone.utc).isoformat()}] ✅ SIGNAL {coin} -> {rec['signal']}")
+            else:
+                print(f"⚪ No signal for {coin}")
 
-        elapsed = time.time() - cycle_start
-        to_sleep = max(0, CHECK_INTERVAL - elapsed)
-        print(f"✅ Cycle completed in {elapsed:.2f}s — sleeping {to_sleep:.1f}s\n")
-        sys.stdout.flush()
-        time.sleep(to_sleep)
+            sys.stdout.flush()
+
+        except Exception as e:
+            log_error(f"Main loop error for {coin}: {repr(e)}")
+            print(f"❌ Error while processing {coin}: {repr(e)}")
+
+    elapsed = time.time() - cycle_start
+    print(f"\n✅ Cycle completed in {elapsed:.2f}s — job finished.\n")
+    sys.stdout.flush()
+
 
 if __name__ == "__main__":
     main()
