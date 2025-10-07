@@ -15,6 +15,7 @@ from utils import append_journal, log_error
 from alert import send_telegram
 from datetime import datetime, timezone
 import json
+import sys
 
 def format_alert(rec: dict) -> str:
     """Format a readable HTML message for Telegram from the rec dict."""
@@ -31,34 +32,45 @@ def format_alert(rec: dict) -> str:
     )
 
 def main():
-    print("Starting EMA+ADX multi-coin scanner...")
+    print("🚀 EMA+ADX Multi-Coin Scanner Starting...")
+    print(f"🧭 Tracking coins: {', '.join(COINS)}")
+    print(f"⏱️  Interval between scans: {CHECK_INTERVAL} seconds")
+    sys.stdout.flush()  # ensure GitHub Actions shows these immediately
+
     while True:
         cycle_start = time.time()
+        print(f"\n🔁 Starting new scan cycle at {datetime.now(timezone.utc).isoformat()} UTC")
+        sys.stdout.flush()
+
         for coin in COINS:
             try:
+                print(f"🔍 Checking {coin} ...")
+                sys.stdout.flush()
+
                 rec = check_strategy(coin)
                 if rec:
-                    # Append to CSV (rich record)
                     append_journal(JOURNAL_FILE, rec)
 
-                    # Send Telegram
                     msg = format_alert(rec)
                     ok = send_telegram(msg)
                     if not ok:
                         log_error(f"Telegram failed for {coin} (signal={rec['signal']})")
 
-                    # print to console (compact JSON)
-                    print(f"[{datetime.now(timezone.utc).isoformat()}] SIGNAL {coin} -> {rec['signal']}")
-                    # optionally also show rec as JSON for immediate debugging
-                    # print(json.dumps(rec, indent=2, default=str))
+                    print(f"[{datetime.now(timezone.utc).isoformat()}] ✅ SIGNAL {coin} -> {rec['signal']}")
+                    sys.stdout.flush()
+                else:
+                    print(f"⚪ No signal for {coin}")
+                    sys.stdout.flush()
 
             except Exception as e:
                 log_error(f"Main loop error for {coin}: {repr(e)}")
+                print(f"❌ Error while processing {coin}: {repr(e)}")
+                sys.stdout.flush()
 
-        # sleep until next cycle (approx)
         elapsed = time.time() - cycle_start
         to_sleep = max(0, CHECK_INTERVAL - elapsed)
-        print(f"Cycle completed in {elapsed:.2f}s — sleeping {to_sleep:.1f}s\n")
+        print(f"✅ Cycle completed in {elapsed:.2f}s — sleeping {to_sleep:.1f}s\n")
+        sys.stdout.flush()
         time.sleep(to_sleep)
 
 if __name__ == "__main__":
