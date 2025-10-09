@@ -1,62 +1,51 @@
-name: EMA+ADX Multi-Coin Bot (Fast Build + 15min Run)
+name: EMA+ADX Multi-Coin Scanner
 
 on:
   schedule:
-    - cron: "*/15 * * * *"  # every 15 minutes UTC
-  workflow_dispatch:
+    - cron: "*/15 * * * *"  # Runs every 15 minutes
+  workflow_dispatch:        # Allows manual trigger from GitHub UI
 
 jobs:
   run-bot:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
 
     steps:
-      # 1️⃣ Checkout the latest code
-      - name: 📥 Checkout repository
+      # 1️⃣ Checkout repository
+      - name: Checkout repo
         uses: actions/checkout@v4
 
-      # 2️⃣ Cache uv dependencies (super fast)
-      - name: ⚡ Cache Python dependencies
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/uv
-          key: ${{ runner.os }}-uv-${{ hashFiles('requirements.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-uv-
-
-      # 3️⃣ Set up Python
-      - name: 🐍 Set up Python 3.12
+      # 2️⃣ Setup Python
+      - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: "3.12"
 
-      # 4️⃣ Install dependencies using uv (10x faster than pip)
-      - name: 🧩 Install dependencies
+      # 3️⃣ Cache pip dependencies
+      - name: Cache pip dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      # 4️⃣ Install dependencies using UV (super fast)
+      - name: Install dependencies (fast, system-wide)
         run: |
           pip install uv
-          uv pip install -r requirements.txt
+          uv pip install --system -r requirements.txt
 
-      # 5️⃣ Run the EMA+ADX bot (single cycle)
-      - name: 🚀 Run EMA+ADX Bot
-        env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          TELEGRAM_ENABLED: true
+      # 5️⃣ Run the bot
+      - name: Run EMA+ADX Bot
         run: |
-          echo "⏱️ Running EMA+ADX Bot..."
+          echo "🚀 Running EMA+ADX Multi-Coin Scanner..."
           python main.py
 
-      # 6️⃣ Commit updated CSV journal (if new signals found)
-      - name: 💾 Commit and push journal updates
-        if: success()
-        run: |
-          git config --global user.name "github-actions"
-          git config --global user.email "github-actions@github.com"
-
-          if [ -f "signals_journal.csv" ]; then
-            git add signals_journal.csv
-            git commit -m "Update signals journal [skip ci]" || echo "No new signals to commit"
-            git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git main || echo "No push made"
-          else
-            echo "No signals_journal.csv found — skipping commit."
-          fi
+      # 6️⃣ Optional: Commit logs or output results if needed
+      # - name: Commit results
+      #   run: |
+      #     git config user.name "github-actions"
+      #     git config user.email "actions@github.com"
+      #     git add logs/ || true
+      #     git commit -m "Update logs from scheduled run" || true
+      #     git push origin main || true
