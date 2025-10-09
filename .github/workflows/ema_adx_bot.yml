@@ -1,0 +1,67 @@
+name: EMA+ADX Multi-Coin Scanner
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"  # every 15 min UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: emaadx-bot
+  cancel-in-progress: true
+
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download pre-built dependencies layer
+        uses: actions/download-artifact@v4
+        with:
+          name: python-layer
+          path: .
+        continue-on-error: true  # skip if no artifact yet
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Extract dependency layer
+        run: |
+          if [ -f python-layer.tar.gz ]; then
+            tar -xzf python-layer.tar.gz
+            source venv/bin/activate
+          else
+            echo "⚠️ No prebuilt layer found, installing manually..."
+            python -m venv venv
+            source venv/bin/activate
+            pip install -r requirements.txt
+          fi
+
+      - name: Run EMA+ADX bot (single scan)
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TELEGRAM_ENABLED: "True"
+        run: |
+          source venv/bin/activate
+          python main.py
+
+      - name: Commit and push updated journal
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          if [ -f "journal.csv" ]; then
+            git add journal.csv
+          elif [ -f "signals_journal.csv" ]; then
+            git add signals_journal.csv
+          fi
+          git commit -m "Update signals journal (auto)" || echo "No changes to commit"
+          git push origin main || echo "No changes pushed"
