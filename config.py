@@ -9,7 +9,7 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")   # set in repo Secrets
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")       # set in repo Secrets
 
 # --- Coins to monitor ---
-COINS = os.getenv("COINS", "SOLUSDT,ETHUSDT,BTCUSDT,XRPUSDT,DOGEUSDT").split(",")
+COINS = [c.strip().replace('"', '').replace("'", '') for c in os.getenv("COINS", "SOLUSDT,ETHUSDT,BTCUSDT,XRPUSDT,DOGEUSDT").split(",")]
 
 # --- Timeframes ---
 LTF_INTERVAL = os.getenv("LTF_INTERVAL", "15m")

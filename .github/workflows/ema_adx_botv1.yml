@@ -1,41 +1,63 @@
-name: EMA+ADX Signal Bot
+name: EMA+ADX Multi-Coin Scanner
 
 on:
   schedule:
     - cron: "*/12 * * * *"
   workflow_dispatch:
 
+permissions:
+  contents: write
+  id-token: write
+
+concurrency:
+  group: emaadx-bot
+  cancel-in-progress: true
+
 jobs:
-  run-strategy:
+  run-bot:
     runs-on: ubuntu-latest
+    timeout-minutes: 0.7
 
     steps:
-      - name: Checkout repo
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.12"
+
+      - name: Cache pip dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
 
       - name: Install dependencies
         run: |
-          pip install pandas requests ta python-telegram-bot
+          pip install uv
+          uv pip install --system -r requirements.txt
 
-      - name: Run main strategy
+      - name: Run EMA+ADX Bot
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          COINS: ${{ secrets.COINS }}
-          LTF_INTERVAL: "15m"
-          HTF_INTERVAL: "1h"
-          JOURNAL_FILE: "signals_journal.csv"
-        run: python main.py
-
-      - name: Commit and push all changes
         run: |
-          git config user.name "github-actions"
-          git config user.email "actions@github.com"
-          git add -A
-          git diff --cached --quiet || git commit -m "🪶 Auto-update from EMA+ADX bot"
-          git push
+          echo "🚀 Starting EMA+ADX Multi-Coin Scanner..."
+          python main.py
+
+      - name: Commit and push results
+        if: success() || failure()
+        run: |
+          echo "🧾 Checking for updated CSV/logs..."
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add signals_journal.csv logs/ || true
+          git diff --cached --quiet || (
+            git commit -m "📈 Auto-update: Signals or logs from 15-min scan"
+            git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }} main
+            echo "✅ CSV and logs pushed successfully."
+          )
+          echo "🫡 No new changes to commit — skipping push."
