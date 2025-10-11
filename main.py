@@ -5,6 +5,7 @@ Single-run orchestrator:
  - uses strategy.check_strategy to evaluate each
  - journals results (CSV)
  - sends Telegram alert for matches
+ - includes startup test for Telegram + CSV logging
 """
 
 from datetime import datetime, timezone
@@ -14,6 +15,7 @@ from config import COINS, CHECK_INTERVAL, JOURNAL_FILE
 from strategy import check_strategy
 from utils import append_journal, log_error
 from alert import send_telegram
+import os
 
 
 def format_alert(rec: dict) -> str:
@@ -30,11 +32,56 @@ def format_alert(rec: dict) -> str:
     )
 
 
+def test_telegram_and_csv():
+    """Send a test message to Telegram and test CSV writing."""
+    print("🧪 Running startup tests...\n")
+
+    # Telegram test
+    test_msg = f"✅ TEST ALERT — Bot connectivity check at {datetime.now(timezone.utc).isoformat()} UTC"
+    telegram_ok = send_telegram(test_msg)
+    if telegram_ok:
+        print("📨 Telegram test message sent successfully!")
+    else:
+        print("❌ Telegram test message FAILED — check token/chat ID or Secrets config.")
+        log_error("Startup Telegram test failed.")
+
+    # CSV test
+    test_record = {
+        "symbol": "TESTUSDT",
+        "signal": "TEST",
+        "price": 123.456,
+        "checked_at_utc": datetime.now(timezone.utc).isoformat(),
+        "adx_ltf": 20,
+        "ema_fast_ltf": 1.2345,
+        "ema_slow_ltf": 1.2345,
+        "ema_fast_htf": 1.2345,
+        "ema_slow_htf": 1.2345,
+        "ltf_trend_bias": "NEUTRAL",
+        "htf_trend_bias": "NEUTRAL",
+        "adx_strength": "TEST",
+    }
+
+    try:
+        append_journal(JOURNAL_FILE, test_record)
+        if os.path.exists(JOURNAL_FILE):
+            print(f"🧾 CSV test succeeded — record appended to {JOURNAL_FILE}")
+        else:
+            print("⚠️ CSV file not found after write attempt.")
+    except Exception as e:
+        log_error(f"CSV write test failed: {repr(e)}")
+        print(f"❌ CSV write test failed: {repr(e)}")
+
+    print("\n✅ Startup tests complete.\n")
+
+
 def main():
     print("🚀 EMA+ADX Multi-Coin Scanner (Single Run)")
     print(f"🧭 Tracking coins: {', '.join(COINS)}")
     print(f"🕒 Started at: {datetime.now(timezone.utc).isoformat()} UTC\n")
     sys.stdout.flush()
+
+    # Run startup test
+    test_telegram_and_csv()
 
     cycle_start = time.time()
 
