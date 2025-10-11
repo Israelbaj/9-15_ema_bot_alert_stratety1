@@ -1,0 +1,2 @@
+symbol,signal,price,checked_at_utc,adx_ltf,ema_fast_ltf,ema_slow_ltf,ema_fast_htf,ema_slow_htf,ltf_trend_bias,htf_trend_bias,adx_strength
+STARTUPTEST,TEST,0.0,2025-10-11T14:58:08.719798+00:00,0,0.0,0.0,0.0,0.0,NEUTRAL,NEUTRAL,NONE
