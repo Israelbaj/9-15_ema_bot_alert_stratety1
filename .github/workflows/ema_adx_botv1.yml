@@ -1,64 +1,41 @@
-name: EMA+ADX Multi-Coin Scanner
+name: EMA+ADX Signal Bot
 
 on:
   schedule:
-    - cron: "*/12 * * * *"  # ⏰ Runs every 12 minutes (UTC)
-  workflow_dispatch:          # 🚀 Allows manual trigger from GitHub UI
+    - cron: "*/12 * * * *"
+  workflow_dispatch:
 
 jobs:
-  run-bot:
+  run-strategy:
     runs-on: ubuntu-latest
 
     steps:
-      # 1️⃣ Checkout repository
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      # 2️⃣ Setup Python
-      - name: Setup Python
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: "3.11"
 
-      # 3️⃣ Cache pip dependencies
-      - name: Cache pip dependencies
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-pip-
-
-      # 4️⃣ Install dependencies (UV)
-      - name: Install dependencies (UV)
+      - name: Install dependencies
         run: |
-          pip install uv
-          uv pip install --system -r requirements.txt
+          pip install pandas requests ta python-telegram-bot
 
-      # 5️⃣ Run startup test (only once per job)
-      - name: Run startup system test
+      - name: Run main strategy
         env:
-          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: |
-          echo "🧪 Running startup system test (Telegram + CSV)..."
-          python startup.py
+          COINS: ${{ secrets.COINS }}
+          LTF_INTERVAL: "15m"
+          HTF_INTERVAL: "1h"
+          JOURNAL_FILE: "signals_journal.csv"
+        run: python main.py
 
-      # 6️⃣ Run the main EMA+ADX strategy
-      - name: Run EMA+ADX Bot
-        env:
-          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: |
-          echo "🚀 Running EMA+ADX Multi-Coin Scanner..."
-          python main.py
-
-      # 7️⃣ Commit updated signals/logs
-      - name: Commit results
-        if: always()
+      - name: Commit and push all changes
         run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
-          git add signals_journal.csv logs/ || true
-          git commit -m "📈 Auto-update: Signals or logs from 12-min scan" || true
-          git push origin main || true
+          git add -A
+          git diff --cached --quiet || git commit -m "🪶 Auto-update from EMA+ADX bot"
+          git push
