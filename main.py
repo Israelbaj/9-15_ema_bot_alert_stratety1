@@ -27,6 +27,7 @@ def main():
                 # Append to CSV
                 append_journal(JOURNAL_FILE, result)
                 print(f"✅ Logged {result['signal']} signal for {symbol}")
+                print(f"✅ Logged {result['signal']} signal for {symbol} (synced to Google Sheets)")
 
                 # Send Telegram alert
                 msg = (
