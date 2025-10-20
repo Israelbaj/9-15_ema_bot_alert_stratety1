@@ -2,7 +2,7 @@ name: EMA+ADX Multi-Coin Scanner
 
 on:
   schedule:
-    - cron: "*/12 * * * *"
+    - cron: "*/12 * * * *"  # Runs every 12 minutes
   workflow_dispatch:
 
 permissions:
@@ -40,6 +40,11 @@ jobs:
           pip install uv
           uv pip install --system -r requirements.txt
 
+      - name: Ensure logs folder exists
+        run: |
+          mkdir -p logs
+          echo "✅ Logs folder ensured."
+
       - name: Run EMA+ADX Bot
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -61,5 +66,4 @@ jobs:
             git commit -m "📈 Auto-update: Signals or logs from 15-min scan"
             git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }} main
             echo "✅ CSV and logs pushed successfully."
-          )
-          echo "🫡 No new changes to commit — skipping push."
+          ) || echo "🫡 No new changes to commit — skipping push."
