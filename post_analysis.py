@@ -51,7 +51,7 @@ def analyze_pending():
 
             # fetch klines from start to end (use 15m or 5m as needed)
             # convert to millis and compute limit; simplest: fetch 1000 and then slice
-            df = fetch_binance_klines(symbol, interval="5m", limit=1000)
+            df = fetch_binance_klines(symbol, interval="15m", limit=1000)
             if df.empty:
                 print(f"No price data for {symbol} to analyze.")
                 continue
