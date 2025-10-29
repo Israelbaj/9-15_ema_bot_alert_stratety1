@@ -1,17 +1,10 @@
-"""
-main.py
-EMA+ADX Multi-Coin Scanner:
- - Evaluates strategy.py across configured COINS
- - Sends Telegram alerts on valid signals
- - Logs results to signals_journal.csv
-"""
-
+# main.py
 import os
 from datetime import datetime, timezone
 from strategy import check_strategy
-from alert import send_telegram
-from utils import append_journal, log_error
-from config import COINS, JOURNAL_FILE
+# from alert import send_telegram   # commented for collection mode (uncomment when re-enabling alerts)
+from utils import append_journal, append_to_sheets_only, log_error
+from config import COINS, JOURNAL_FILE, COLLECTION_MODE
 
 def main():
     print("🚀 Starting EMA+ADX Multi-Coin Scanner...\n")
@@ -24,21 +17,16 @@ def main():
             result = check_strategy(symbol)
 
             if result:
-                # Append to CSV
-                append_journal(JOURNAL_FILE, result)
-                print(f"✅ Logged {result['signal']} signal for {symbol}")
-                print(f"✅ Logged {result['signal']} signal for {symbol} (synced to Google Sheets)")
+                # === Primary collection path (active) ===
+                append_to_sheets_only(result)
+                print(f"☁️ Appended {result['signal']} for {symbol} to Google Sheet")
 
-                # Send Telegram alert
-                msg = (
-                    f"📈 <b>{symbol}</b> — <b>{result['signal']}</b> Signal\n"
-                    f"💰 Price: {result['price']}\n"
-                    f"ADX: {result['adx_ltf']:.2f}\n"
-                    f"LTF Trend: {'Bullish' if result['ltf_trend_bias'] > 0 else 'Bearish'}\n"
-                    f"HTF Trend: {'Bullish' if result['htf_trend_bias'] > 0 else 'Bearish'}\n"
-                    f"🕒 {result['checked_at_utc']}"
-                )
-                send_telegram(msg)
+                # === Local CSV (disabled during collection to avoid churn) ===
+                # append_journal(JOURNAL_FILE, result)  # <-- uncomment to re-enable CSV journaling
+
+                # === Telegram alert: keep code but commented for now ===
+                # msg = f"📈 {symbol} - {result['signal']} @ {result['price']}"
+                # send_telegram(msg)  # <-- uncomment to re-enable alerts
 
             else:
                 print(f"😴 No valid signal for {symbol}")
@@ -47,7 +35,6 @@ def main():
             log_error(f"main loop error on {symbol}: {repr(e)}")
 
     print("\n✅ Scan complete — results saved (if any).\n")
-
 
 if __name__ == "__main__":
     main()
