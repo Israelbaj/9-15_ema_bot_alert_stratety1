@@ -195,4 +195,3 @@ def check_strategy(symbol: str) -> Optional[Dict]:
     except Exception as e:
         log_error(f"check_strategy({symbol}) error: {repr(e)}")
         return None
-
