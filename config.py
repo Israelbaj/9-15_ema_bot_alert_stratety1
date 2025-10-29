@@ -43,3 +43,4 @@ COLLECTION_MODE = True
 
 # Local small cache for previous signals
 LAST_SIGNALS_FILE = os.getenv("LAST_SIGNALS_FILE", "last_signals.json")
+
