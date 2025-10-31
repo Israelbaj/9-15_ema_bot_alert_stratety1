@@ -36,6 +36,7 @@ GOOGLE_SERVICE_ACCOUNT_JSON = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
 
 # HTTP / timeout
 REQUEST_TIMEOUT = int(os.getenv("REQUEST_TIMEOUT", 10))
+LOG_FILE = "error.log"
 
 # Data collection mode: True -> only Google Sheets (no CSV/Telegram).
 # Keep this True while backtesting / collecting. Set False to re-enable CSV & Telegram.
