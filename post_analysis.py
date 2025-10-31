@@ -1,9 +1,8 @@
 # post_analysis.py
-import time
-from datetime import datetime, timezone
-from sheets_logger import find_pending_records, _get_sheet, COLUMNS
-from utils import fetch_binance_klines, log_error
 import pandas as pd
+from datetime import datetime, timezone
+from sheets_logger import _get_sheet, find_pending_records, update_cells_by_header, HEADERS
+from utils import fetch_binance_klines, log_error
 
 def analyze_pending():
     sheet = _get_sheet()
@@ -12,98 +11,87 @@ def analyze_pending():
         print("No pending records to analyze.")
         return
 
-    # get all records to detect next signals per symbol (we use the sheet data)
+    # Build a list of all records to help detect next signals if needed
     all_records = sheet.get_all_records()
-
-    # Build map of latest signal row index per symbol (so we can detect "next signal")
     symbol_rows = {}
     for idx, rec in enumerate(all_records, start=2):
-        sym = rec.get("symbol")
+        sym = (rec.get("symbol") or "").strip().upper()
         if sym:
             symbol_rows.setdefault(sym, []).append((idx, rec))
 
     for row_idx, rec in pending:
         try:
-            symbol = rec.get("symbol")
+            symbol = (rec.get("symbol") or "").strip().upper()
             checked_at = rec.get("checked_at_utc")
-            signal_type = rec.get("signal")
-            entry_price = float(rec.get("price") or 0)
+            signal_type = (rec.get("signal") or "").upper()
+            entry_price = float(rec.get("price") or 0.0)
 
-            # find the "next" signal row for this symbol after this checked_at (if any)
-            rows_for_symbol = symbol_rows.get(symbol, [])
+            if not symbol or not checked_at:
+                print(f"Skipping row {row_idx}: missing symbol/checked_at.")
+                continue
+
+            # Find next signal row (if any) for this symbol that occurs after this row
             next_row = None
+            rows_for_symbol = symbol_rows.get(symbol, [])
             for idx, r in rows_for_symbol:
                 if idx <= row_idx:
                     continue
-                # choose the first later signal (assuming sheet appended in time order)
                 next_row = (idx, r)
                 break
 
-            # Time window: start = checked_at, end = next_signal_time if exists else now
+            # Window start & end
             start_ts = pd.to_datetime(checked_at)
-            end_ts = pd.Timestamp.utcnow()
             if next_row:
-                # parse the next row's checked_at_utc
                 try:
                     end_ts = pd.to_datetime(next_row[1].get("checked_at_utc"))
                 except Exception:
                     end_ts = pd.Timestamp.utcnow()
+            else:
+                end_ts = pd.Timestamp.utcnow()
 
-            # fetch klines from start to end (use 15m or 5m as needed)
-            # convert to millis and compute limit; simplest: fetch 1000 and then slice
+            # Fetch 15m candles (you requested 15m)
             df = fetch_binance_klines(symbol, interval="15m", limit=1000)
             if df.empty:
                 print(f"No price data for {symbol} to analyze.")
                 continue
 
-            # keep only rows between start_ts and end_ts
             mask = (df["timestamp"] >= start_ts) & (df["timestamp"] <= end_ts)
-            window = df.loc[mask]
+            window = df.loc[mask].reset_index(drop=True)
             if window.empty:
-                print(f"No price candles in window for {symbol}")
+                print(f"No candles in analysis window for {symbol} between {start_ts} and {end_ts}.")
                 continue
 
-            # For LONG: best_opening_price = min(low), max_movement_price = max(high)
-            # For SHORT: best_opening_price = max(high), max_movement_price = min(low)
-            if signal_type and signal_type.upper().startswith("LONG"):
+            # Compute best opening and max movement
+            if signal_type.startswith("LONG"):
                 best_opening_price = float(window["low"].min())
                 max_movement_price = float(window["high"].max())
-                # pct increase relative to entry
-                pct_increase = ((max_movement_price / entry_price) - 1.0) * 100.0 if entry_price else None
-                # trade_time: time from entry to time of max_movement_price
+                # time of max
                 idx_max = window["high"].idxmax()
                 time_of_max = window.loc[idx_max, "timestamp"]
                 trade_time_hrs = (pd.to_datetime(time_of_max) - pd.to_datetime(checked_at)).total_seconds() / 3600.0
+                pct_increase = ((max_movement_price / entry_price) - 1.0) * 100.0 if entry_price else None
             else:
                 # SHORT
                 best_opening_price = float(window["high"].max())
                 max_movement_price = float(window["low"].min())
-                pct_increase = ((entry_price / max_movement_price) - 1.0) * 100.0 if entry_price and max_movement_price else None
                 idx_min = window["low"].idxmin()
                 time_of_min = window.loc[idx_min, "timestamp"]
                 trade_time_hrs = (pd.to_datetime(time_of_min) - pd.to_datetime(checked_at)).total_seconds() / 3600.0
-
-            # Update sheet row columns: find column indices based on COLUMNS list
-            def col_index(name):
-                try:
-                    return COLUMNS.index(name) + 1  # 1-based
-                except ValueError:
-                    return None
+                pct_increase = ((entry_price / max_movement_price) - 1.0) * 100.0 if entry_price and max_movement_price else None
 
             updates = {
-                "best_opening_price": best_opening_price,
-                "max_movement_price": max_movement_price,
+                "best_opening_price": round(best_opening_price, 8),
+                "max_movement_price": round(max_movement_price, 8),
                 "trade_time_hrs": round(trade_time_hrs, 6) if trade_time_hrs is not None else "",
                 "pct_increase": round(pct_increase, 6) if pct_increase is not None else "",
                 "status": "analyzed"
             }
 
-            for k, v in updates.items():
-                ci = col_index(k)
-                if ci:
-                    sheet.update_cell(row_idx, ci, v)
-
-            print(f"Updated analysis for {symbol} (row {row_idx}).")
+            ok = update_cells_by_header(row_idx, updates)
+            if ok:
+                print(f"Updated analysis for {symbol} (row {row_idx}).")
+            else:
+                print(f"No updates applied for row {row_idx} (maybe missing columns).")
 
         except Exception as e:
             log_error(f"post_analysis error for row {row_idx}: {repr(e)}")
