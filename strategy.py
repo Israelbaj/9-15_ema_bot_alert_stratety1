@@ -1,30 +1,28 @@
-# strategy.py
-from typing import Optional, Dict
+from typing import List, Dict
 import pandas as pd
 import ta
-from config import EMA_FAST, EMA_SLOW, ADX_LEN, ADX_THRESHOLD, HTF_FACTOR
-from config import LAST_SIGNALS_FILE
-from utils import fetch_binance_klines, log_error, get_prev_signal, update_prev_signal
 from datetime import datetime, timezone
+from config import EMA_FAST, EMA_SLOW, ADX_LEN, ADX_THRESHOLD, HTF_FACTOR
+from utils import fetch_binance_klines, log_error
 
 def _ema(series: pd.Series, span: int) -> pd.Series:
     return series.ewm(span=span, adjust=False).mean()
 
 def _adx_series(df: pd.DataFrame, length: int) -> pd.Series:
     try:
-        adx_ind = ta.trend.ADXIndicator(high=df["high"], low=df["low"], close=df["close"], window=length, fillna=True)
-        return adx_ind.adx()
+        adx = ta.trend.ADXIndicator(high=df["high"], low=df["low"], close=df["close"], window=length, fillna=True)
+        return adx.adx()
     except Exception as e:
         log_error(f"_adx_series error: {e}")
-        return pd.Series([float("nan")] * len(df), index=df.index if not df.empty else pd.RangeIndex(0))
+        return pd.Series([float("nan")] * len(df))
 
 def _rsi_series(df: pd.DataFrame, length: int = 14) -> pd.Series:
     try:
-        rsi_ind = ta.momentum.RSIIndicator(close=df["close"], window=length, fillna=True)
-        return rsi_ind.rsi()
+        rsi = ta.momentum.RSIIndicator(close=df["close"], window=length, fillna=True)
+        return rsi.rsi()
     except Exception as e:
         log_error(f"_rsi_series error: {e}")
-        return pd.Series([float("nan")] * len(df), index=df.index if not df.empty else pd.RangeIndex(0))
+        return pd.Series([float("nan")] * len(df))
 
 def _atr_series(df: pd.DataFrame, length: int = 14) -> pd.Series:
     try:
@@ -32,153 +30,88 @@ def _atr_series(df: pd.DataFrame, length: int = 14) -> pd.Series:
         return atr.average_true_range()
     except Exception as e:
         log_error(f"_atr_series error: {e}")
-        return pd.Series([float("nan")] * len(df), index=df.index if not df.empty else pd.RangeIndex(0))
+        return pd.Series([float("nan")] * len(df))
 
-def check_strategy(symbol: str) -> Optional[Dict]:
+def check_strategy(symbol: str) -> List[Dict]:
+    """Return all EMA crossover events (LONG/SHORT) from the last ~300 candles."""
     try:
-        # fetch with limits handled by utils.fetch_binance_klines
         ltf = fetch_binance_klines(symbol, interval="15m", limit=300)
         htf = fetch_binance_klines(symbol, interval="1h", limit=300)
 
         if ltf.empty or htf.empty:
-            log_error(f"{symbol}: missing LTF/HTF data (ltf_empty={ltf.empty}, htf_empty={htf.empty})")
-            return None
+            log_error(f"{symbol}: missing LTF/HTF data")
+            return []
 
-        # prepare LTF
+        # Prepare LTF
         ltf = ltf.reset_index(drop=True)
-        ltf["close"] = pd.to_numeric(ltf["close"], errors="coerce")
-        ltf["high"] = pd.to_numeric(ltf["high"], errors="coerce")
-        ltf["low"] = pd.to_numeric(ltf["low"], errors="coerce")
-        ltf["volume"] = pd.to_numeric(ltf["volume"], errors="coerce")
+        for col in ["close", "high", "low", "volume"]:
+            ltf[col] = pd.to_numeric(ltf[col], errors="coerce")
 
         ltf["ema_fast"] = _ema(ltf["close"], EMA_FAST)
         ltf["ema_slow"] = _ema(ltf["close"], EMA_SLOW)
-        adx_ser = _adx_series(ltf, ADX_LEN)
-        rsi_ser = _rsi_series(ltf, 14)
-        atr_ser = _atr_series(ltf, 14)
+        ltf["adx"] = _adx_series(ltf, ADX_LEN)
+        ltf["rsi"] = _rsi_series(ltf)
+        ltf["atr"] = _atr_series(ltf)
+        ltf["vol_ma"] = ltf["volume"].rolling(20, min_periods=1).mean()
 
-        # volume MA
-        vol_ma = ltf["volume"].rolling(20, min_periods=1).mean()
-
-        # HTF computations
+        # Prepare HTF
         htf = htf.reset_index(drop=True)
-        htf["close"] = pd.to_numeric(htf["close"], errors="coerce")
         htf["ema_fast"] = _ema(htf["close"], EMA_FAST)
         htf["ema_slow"] = _ema(htf["close"], EMA_SLOW)
 
-        if len(ltf) < 2 or len(htf) < 1:
-            log_error(f"{symbol}: not enough rows (ltf={len(ltf)}, htf={len(htf)})")
-            return None
+        results = []
 
-        # latest values
-        price = float(ltf["close"].iloc[-1])
-        ema_fast_ltf = float(ltf["ema_fast"].iloc[-1])
-        ema_slow_ltf = float(ltf["ema_slow"].iloc[-1])
-        ema_fast_ltf_prev = float(ltf["ema_fast"].iloc[-2])
-        ema_slow_ltf_prev = float(ltf["ema_slow"].iloc[-2])
+        # Loop through each candle and detect crossovers
+        for i in range(1, len(ltf)):
+            ema_fast_prev, ema_slow_prev = ltf["ema_fast"].iloc[i - 1], ltf["ema_slow"].iloc[i - 1]
+            ema_fast_now, ema_slow_now = ltf["ema_fast"].iloc[i], ltf["ema_slow"].iloc[i]
 
-        adx_latest = float(adx_ser.iloc[-1]) if not adx_ser.empty else float("nan")
-        adx_prev = float(adx_ser.iloc[-2]) if len(adx_ser) >= 2 else float("nan")
-        adx_slope = (adx_latest - adx_prev) if (not pd.isna(adx_latest) and not pd.isna(adx_prev)) else None
+            cross_up = (ema_fast_prev < ema_slow_prev) and (ema_fast_now >= ema_slow_now)
+            cross_down = (ema_fast_prev > ema_slow_prev) and (ema_fast_now <= ema_slow_now)
 
-        rsi_latest = float(rsi_ser.iloc[-1]) if not rsi_ser.empty else float("nan")
-        atr_latest = float(atr_ser.iloc[-1]) if not atr_ser.empty else float("nan")
+            if not (cross_up or cross_down):
+                continue
 
-        volume_latest = float(ltf["volume"].iloc[-1])
-        volume_ma_latest = float(vol_ma.iloc[-1]) if not vol_ma.empty else float("nan")
-        volume_ratio = (volume_latest / volume_ma_latest) if (volume_ma_latest and volume_ma_latest > 0) else None
+            # relaxed filtering for collection mode
+            adx_latest = float(ltf["adx"].iloc[i])
+            if pd.isna(adx_latest) or adx_latest < ADX_THRESHOLD:
+                continue
 
-        # HTF latest
-        ema_fast_htf = float(htf["ema_fast"].iloc[-1])
-        ema_slow_htf = float(htf["ema_slow"].iloc[-1])
+            # HTF trend bias
+            htf_latest = htf.iloc[min(int(i / 4), len(htf) - 1)]
+            ema_fast_htf, ema_slow_htf = htf_latest["ema_fast"], htf_latest["ema_slow"]
 
-        # cross detection
-        ltf_cross_up = (ema_fast_ltf_prev < ema_slow_ltf_prev) and (ema_fast_ltf >= ema_slow_ltf)
-        ltf_cross_down = (ema_fast_ltf_prev > ema_slow_ltf_prev) and (ema_fast_ltf <= ema_slow_ltf)
+            long_cond = cross_up and (ema_fast_htf > ema_slow_htf)
+            short_cond = cross_down and (ema_fast_htf < ema_slow_htf)
 
-        # relaxed ADX/HTF usage (set low thresholds for data collection)
-        adx_ok = (not pd.isna(adx_latest)) and (adx_latest >= ADX_THRESHOLD)
-        htf_long_ok = ema_fast_htf >= HTF_FACTOR * ema_slow_htf
-        htf_short_ok = ema_slow_htf >= HTF_FACTOR * ema_fast_htf
+            if not (long_cond or short_cond):
+                continue
 
-        long_condition = ltf_cross_up and adx_ok and htf_long_ok
-        short_condition = ltf_cross_down and adx_ok and htf_short_ok
+            rec = {
+                "checked_at_utc": pd.Timestamp.utcnow().isoformat(),
+                "symbol": symbol,
+                "signal": "LONG" if long_cond else "SHORT",
+                "price": float(ltf["close"].iloc[i]),
+                "ema_fast_ltf": float(ema_fast_now),
+                "ema_slow_ltf": float(ema_slow_now),
+                "adx_ltf": adx_latest,
+                "rsi_ltf": float(ltf["rsi"].iloc[i]),
+                "atr_ltf": float(ltf["atr"].iloc[i]),
+                "volume_latest": float(ltf["volume"].iloc[i]),
+                "volume_ma": float(ltf["vol_ma"].iloc[i]),
+                "ema_fast_htf": float(ema_fast_htf),
+                "ema_slow_htf": float(ema_slow_htf),
+                "ltf_trend_bias": "buy" if ema_fast_now > ema_slow_now else "sell",
+                "htf_trend_bias": "buy" if ema_fast_htf > ema_slow_htf else "sell",
+                "ltf_factor": (ema_fast_now / ema_slow_now) if ema_slow_now else None,
+                "htf_factor": (ema_fast_htf / ema_slow_htf) if ema_slow_htf else None,
+                "candle_time": str(ltf["open_time"].iloc[i]) if "open_time" in ltf.columns else None
+            }
 
-        if not (long_condition or short_condition):
-            return None
+            results.append(rec)
 
-        # slopes percent
-        try:
-            ema_fast_slope = (ema_fast_ltf - ema_fast_ltf_prev) / ema_fast_ltf_prev * 100.0
-        except Exception:
-            ema_fast_slope = None
-        try:
-            ema_slow_slope = (ema_slow_ltf - ema_slow_ltf_prev) / ema_slow_ltf_prev * 100.0
-        except Exception:
-            ema_slow_slope = None
-
-        # factors: direction-aware
-        if long_condition:
-            ltf_factor = (ema_fast_ltf / ema_slow_ltf) if ema_slow_ltf != 0 else None
-        else:
-            ltf_factor = (ema_slow_ltf / ema_fast_ltf) if ema_fast_ltf != 0 else None
-
-        # HTF factor
-        htf_factor = (ema_fast_htf / ema_slow_htf) if ema_slow_htf != 0 else None
-
-        # bias labels
-        ltf_trend_bias = "buy" if ema_fast_ltf > ema_slow_ltf else "sell"
-        htf_trend_bias = "buy" if ema_fast_htf > ema_slow_htf else "sell"
-
-        # previous signal
-        prev = get_prev_signal(symbol)
-        prev_signal_type = prev.get("signal") if prev else None
-        prev_time = prev.get("checked_at_utc") if prev else None
-        signal_gap_hours = None
-        if prev_time:
-            try:
-                prev_ts = pd.to_datetime(prev_time)
-                now_ts = pd.Timestamp.utcnow()
-                delta = now_ts - prev_ts
-                signal_gap_hours = delta.total_seconds() / 3600.0
-            except Exception:
-                signal_gap_hours = None
-
-        rec = {
-            "checked_at_utc": pd.Timestamp.utcnow().isoformat(),
-            "symbol": symbol,
-            "signal": "LONG" if long_condition else "SHORT",
-            "price": price,
-            "ema_fast_ltf": ema_fast_ltf,
-            "ema_slow_ltf": ema_slow_ltf,
-            "ema_fast_slope": ema_fast_slope,
-            "ema_slow_slope": ema_slow_slope,
-            "adx_ltf": adx_latest,
-            "adx_slope": adx_slope,
-            "rsi_ltf": rsi_latest,
-            "atr_ltf": atr_latest,
-            "price_to_atr": (price / atr_latest) if (atr_latest and atr_latest > 0) else None,
-            "volume_latest": volume_latest,
-            "volume_ma": volume_ma_latest,
-            "volume_ratio": volume_ratio,
-            "ema_fast_htf": ema_fast_htf,
-            "ema_slow_htf": ema_slow_htf,
-            "ltf_trend_bias": ltf_trend_bias,
-            "htf_trend_bias": htf_trend_bias,
-            "ltf_factor": ltf_factor,
-            "htf_factor": htf_factor,
-            "prev_signal": prev_signal_type,
-            "signal_gap_hours": signal_gap_hours
-        }
-
-        # update local prev-signal cache
-        try:
-            update_prev_signal(symbol, {"signal": rec["signal"], "checked_at_utc": rec["checked_at_utc"]})
-        except Exception as e:
-            log_error(f"update_prev_signal failed: {repr(e)}")
-
-        return rec
+        return results
 
     except Exception as e:
         log_error(f"check_strategy({symbol}) error: {repr(e)}")
-        return None
+        return []
