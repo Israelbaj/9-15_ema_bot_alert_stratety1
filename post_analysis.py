@@ -1,17 +1,20 @@
 # post_analysis.py
 import pandas as pd
+import time
 from datetime import datetime, timezone
 from sheets_logger import _get_sheet, find_pending_records, update_cells_by_header
 from utils import fetch_binance_klines, log_error, API_CALLS, api_limit_reached
+from config import RUNTIME_LIMIT_MINUTES
 
 def analyze_pending():
+    start_ts = time.time()
     sheet = _get_sheet()
     pending = find_pending_records()
     if not pending:
         print("No pending records to analyze.")
         return
 
-    # Build map of rows per symbol
+    # Build map of rows per symbol (to find next signal)
     all_records = sheet.get_all_records()
     symbol_rows = {}
     for idx, rec in enumerate(all_records, start=2):
@@ -20,9 +23,15 @@ def analyze_pending():
             symbol_rows.setdefault(sym, []).append((idx, rec))
 
     for row_idx, rec in pending:
-        # check API limit before each analysis
+        # runtime safeguard
+        elapsed = time.time() - start_ts
+        if elapsed >= (int(RUNTIME_LIMIT_MINUTES) * 60):
+            print(f"⏱ Post-analysis runtime limit reached ({elapsed:.1f}s) - stopping analysis.")
+            break
+
+        # API cap
         if api_limit_reached():
-            print(f"API call limit reached ({API_CALLS}) - stopping post-analysis.")
+            print(f"🛑 API call limit reached ({API_CALLS}) - stopping post-analysis.")
             break
 
         try:
@@ -44,25 +53,25 @@ def analyze_pending():
                 next_row = (idx, r)
                 break
 
-            start_ts = pd.to_datetime(checked_at)
+            start_ts_window = pd.to_datetime(checked_at)
             if next_row:
                 try:
-                    end_ts = pd.to_datetime(next_row[1].get("checked_at_utc"))
+                    end_ts_window = pd.to_datetime(next_row[1].get("checked_at_utc"))
                 except Exception:
-                    end_ts = pd.Timestamp.utcnow()
+                    end_ts_window = pd.Timestamp.utcnow()
             else:
-                end_ts = pd.Timestamp.utcnow()
+                end_ts_window = pd.Timestamp.utcnow()
 
-            # respect API/candle limits inside fetch
+            # fetch candles (respecting internal limits)
             df = fetch_binance_klines(symbol, interval="15m", limit=300)
             if df.empty:
                 print(f"No price data for {symbol} to analyze.")
                 continue
 
-            mask = (df["timestamp"] >= start_ts) & (df["timestamp"] <= end_ts)
+            mask = (df["timestamp"] >= start_ts_window) & (df["timestamp"] <= end_ts_window)
             window = df.loc[mask].reset_index(drop=True)
             if window.empty:
-                print(f"No candles in analysis window for {symbol} between {start_ts} and {end_ts}.")
+                print(f"No candles in analysis window for {symbol} between {start_ts_window} and {end_ts_window}.")
                 continue
 
             if signal_type.startswith("LONG"):
@@ -99,3 +108,4 @@ def analyze_pending():
 
 if __name__ == "__main__":
     analyze_pending()
+
