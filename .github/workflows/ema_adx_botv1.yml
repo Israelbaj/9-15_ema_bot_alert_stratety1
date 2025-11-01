@@ -1,26 +1,21 @@
-# .github/workflows/ema_adx_collect.yml
 name: EMA+ADX Multi-Coin Scanner + Post-Analysis
 
 on:
   schedule:
-    - cron: "0 */4 * * *"  # every 4 hours at minute 0
+    - cron: "0 */4 * * *"   # every 4 hours
   workflow_dispatch:
 
 permissions:
   contents: write
   id-token: write
 
-concurrency:
-  group: emaadx-bot
-  cancel-in-progress: true
-
 jobs:
   run-bot:
     runs-on: ubuntu-latest
-    timeout-minutes: 3  # fail-safe; job times out quickly if something hangs
+    timeout-minutes: 5  # 5 minutes first-run safe cap
 
     steps:
-      - name: Checkout repository
+      - name: Checkout repo
         uses: actions/checkout@v4
 
       - name: Setup Python
@@ -28,7 +23,7 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Cache pip dependencies
+      - name: Cache pip
         uses: actions/cache@v4
         with:
           path: ~/.cache/pip
@@ -41,42 +36,32 @@ jobs:
           pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Ensure logs folder exists
-        run: |
-          mkdir -p logs
-          echo "✅ Logs folder ensured."
+      - name: Ensure logs directory
+        run: mkdir -p logs
 
-      - name: Run EMA+ADX Bot
+      - name: Run main (detect signals)
         env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
           GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
-          API_CALL_LIMIT: ${{ secrets.API_CALL_LIMIT }}
-          CANDLE_LIMIT: ${{ secrets.CANDLE_LIMIT }}
-          RUNTIME_LIMIT_MINUTES: ${{ secrets.RUNTIME_LIMIT_MINUTES }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
-          echo "🚀 Running main.py (signal detection)..."
           python main.py
 
       - name: Run post-analysis
         env:
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
           GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
-          API_CALL_LIMIT: ${{ secrets.API_CALL_LIMIT }}
-          CANDLE_LIMIT: ${{ secrets.CANDLE_LIMIT }}
         run: |
-          echo "🔍 Running post_analysis.py (metrics update)..."
           python post_analysis.py
 
-      - name: Commit and push results (optional - only if you want CSV/logs pushed)
+      - name: Commit logs (optional)
         if: always()
         run: |
-          echo "🧾 Commit step: (kept minimal)"
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add signals_journal.csv logs/ || true
+          git add logs/ || true
           git diff --cached --quiet || (
-            git commit -m "📊 Auto-update: signals + post-analysis metrics" || true
-            git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }} main || true
-          )
+            git commit -m "Auto: bot logs"
+            git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }} main
+          ) || echo "No changes to push."
