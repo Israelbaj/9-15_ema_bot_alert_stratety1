@@ -36,8 +36,9 @@ def _atr_series(df: pd.DataFrame, length: int = 14) -> pd.Series:
 
 def check_strategy(symbol: str) -> Optional[Dict]:
     try:
-        ltf = fetch_binance_klines(symbol, interval="15m", limit=200)
-        htf = fetch_binance_klines(symbol, interval="1h", limit=200)
+        # fetch with limits handled by utils.fetch_binance_klines
+        ltf = fetch_binance_klines(symbol, interval="15m", limit=300)
+        htf = fetch_binance_klines(symbol, interval="1h", limit=300)
 
         if ltf.empty or htf.empty:
             log_error(f"{symbol}: missing LTF/HTF data (ltf_empty={ltf.empty}, htf_empty={htf.empty})")
@@ -91,14 +92,11 @@ def check_strategy(symbol: str) -> Optional[Dict]:
         ema_fast_htf = float(htf["ema_fast"].iloc[-1])
         ema_slow_htf = float(htf["ema_slow"].iloc[-1])
 
-        ema_fast_htf_prev = float(htf["ema_fast"].iloc[-2]) if len(htf) >= 2 else None
-        ema_slow_htf_prev = float(htf["ema_slow"].iloc[-2]) if len(htf) >= 2 else None
-
         # cross detection
         ltf_cross_up = (ema_fast_ltf_prev < ema_slow_ltf_prev) and (ema_fast_ltf >= ema_slow_ltf)
         ltf_cross_down = (ema_fast_ltf_prev > ema_slow_ltf_prev) and (ema_fast_ltf <= ema_slow_ltf)
 
-        # relaxed ADX/HTF usage (you set thresholds low for data collection)
+        # relaxed ADX/HTF usage (set low thresholds for data collection)
         adx_ok = (not pd.isna(adx_latest)) and (adx_latest >= ADX_THRESHOLD)
         htf_long_ok = ema_fast_htf >= HTF_FACTOR * ema_slow_htf
         htf_short_ok = ema_slow_htf >= HTF_FACTOR * ema_fast_htf
@@ -119,23 +117,20 @@ def check_strategy(symbol: str) -> Optional[Dict]:
         except Exception:
             ema_slow_slope = None
 
-        # factors: use direction-aware definition
+        # factors: direction-aware
         if long_condition:
             ltf_factor = (ema_fast_ltf / ema_slow_ltf) if ema_slow_ltf != 0 else None
         else:
             ltf_factor = (ema_slow_ltf / ema_fast_ltf) if ema_fast_ltf != 0 else None
 
-        # HTF factor similarly
-        if ema_slow_htf != 0:
-            htf_factor = (ema_fast_htf / ema_slow_htf)
-        else:
-            htf_factor = None
+        # HTF factor
+        htf_factor = (ema_fast_htf / ema_slow_htf) if ema_slow_htf != 0 else None
 
         # bias labels
         ltf_trend_bias = "buy" if ema_fast_ltf > ema_slow_ltf else "sell"
         htf_trend_bias = "buy" if ema_fast_htf > ema_slow_htf else "sell"
 
-        # previous signal from small local cache to compute gap hours
+        # previous signal
         prev = get_prev_signal(symbol)
         prev_signal_type = prev.get("signal") if prev else None
         prev_time = prev.get("checked_at_utc") if prev else None
@@ -154,37 +149,29 @@ def check_strategy(symbol: str) -> Optional[Dict]:
             "symbol": symbol,
             "signal": "LONG" if long_condition else "SHORT",
             "price": price,
-
             "ema_fast_ltf": ema_fast_ltf,
             "ema_slow_ltf": ema_slow_ltf,
             "ema_fast_slope": ema_fast_slope,
             "ema_slow_slope": ema_slow_slope,
-
             "adx_ltf": adx_latest,
             "adx_slope": adx_slope,
-
             "rsi_ltf": rsi_latest,
             "atr_ltf": atr_latest,
             "price_to_atr": (price / atr_latest) if (atr_latest and atr_latest > 0) else None,
-
             "volume_latest": volume_latest,
             "volume_ma": volume_ma_latest,
             "volume_ratio": volume_ratio,
-
             "ema_fast_htf": ema_fast_htf,
             "ema_slow_htf": ema_slow_htf,
-
             "ltf_trend_bias": ltf_trend_bias,
             "htf_trend_bias": htf_trend_bias,
-
             "ltf_factor": ltf_factor,
             "htf_factor": htf_factor,
-
             "prev_signal": prev_signal_type,
             "signal_gap_hours": signal_gap_hours
         }
 
-        # update local prev-signal cache (so next run can compute gap)
+        # update local prev-signal cache
         try:
             update_prev_signal(symbol, {"signal": rec["signal"], "checked_at_utc": rec["checked_at_utc"]})
         except Exception as e:
