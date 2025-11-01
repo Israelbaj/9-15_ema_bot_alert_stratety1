@@ -1,8 +1,8 @@
 # post_analysis.py
 import pandas as pd
 from datetime import datetime, timezone
-from sheets_logger import _get_sheet, find_pending_records, update_cells_by_header, HEADERS
-from utils import fetch_binance_klines, log_error
+from sheets_logger import _get_sheet, find_pending_records, update_cells_by_header
+from utils import fetch_binance_klines, log_error, API_CALLS, api_limit_reached
 
 def analyze_pending():
     sheet = _get_sheet()
@@ -11,7 +11,7 @@ def analyze_pending():
         print("No pending records to analyze.")
         return
 
-    # Build a list of all records to help detect next signals if needed
+    # Build map of rows per symbol
     all_records = sheet.get_all_records()
     symbol_rows = {}
     for idx, rec in enumerate(all_records, start=2):
@@ -20,6 +20,11 @@ def analyze_pending():
             symbol_rows.setdefault(sym, []).append((idx, rec))
 
     for row_idx, rec in pending:
+        # check API limit before each analysis
+        if api_limit_reached():
+            print(f"API call limit reached ({API_CALLS}) - stopping post-analysis.")
+            break
+
         try:
             symbol = (rec.get("symbol") or "").strip().upper()
             checked_at = rec.get("checked_at_utc")
@@ -30,7 +35,7 @@ def analyze_pending():
                 print(f"Skipping row {row_idx}: missing symbol/checked_at.")
                 continue
 
-            # Find next signal row (if any) for this symbol that occurs after this row
+            # next signal row (first later row for same symbol)
             next_row = None
             rows_for_symbol = symbol_rows.get(symbol, [])
             for idx, r in rows_for_symbol:
@@ -39,7 +44,6 @@ def analyze_pending():
                 next_row = (idx, r)
                 break
 
-            # Window start & end
             start_ts = pd.to_datetime(checked_at)
             if next_row:
                 try:
@@ -49,8 +53,8 @@ def analyze_pending():
             else:
                 end_ts = pd.Timestamp.utcnow()
 
-            # Fetch 15m candles (you requested 15m)
-            df = fetch_binance_klines(symbol, interval="15m", limit=1000)
+            # respect API/candle limits inside fetch
+            df = fetch_binance_klines(symbol, interval="15m", limit=300)
             if df.empty:
                 print(f"No price data for {symbol} to analyze.")
                 continue
@@ -61,17 +65,14 @@ def analyze_pending():
                 print(f"No candles in analysis window for {symbol} between {start_ts} and {end_ts}.")
                 continue
 
-            # Compute best opening and max movement
             if signal_type.startswith("LONG"):
                 best_opening_price = float(window["low"].min())
                 max_movement_price = float(window["high"].max())
-                # time of max
                 idx_max = window["high"].idxmax()
                 time_of_max = window.loc[idx_max, "timestamp"]
                 trade_time_hrs = (pd.to_datetime(time_of_max) - pd.to_datetime(checked_at)).total_seconds() / 3600.0
                 pct_increase = ((max_movement_price / entry_price) - 1.0) * 100.0 if entry_price else None
             else:
-                # SHORT
                 best_opening_price = float(window["high"].max())
                 max_movement_price = float(window["low"].min())
                 idx_min = window["low"].idxmin()
