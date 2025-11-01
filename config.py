@@ -43,7 +43,8 @@ REQUEST_TIMEOUT = int(os.getenv("REQUEST_TIMEOUT") or 10)
 # API limits & candles
 API_CALL_LIMIT = int(os.getenv("API_CALL_LIMIT") or 200)  # total Binance calls per run
 CANDLE_LIMIT = int(os.getenv("CANDLE_LIMIT") or 300)      # max candles request
-
+# Runtime limit for GitHub Actions
+RUNTIME_LIMIT_MINUTES = int(os.getenv("RUNTIME_LIMIT_MINUTES") or 2) 
 # Data collection mode
 COLLECTION_MODE = True  # True = disable Telegram/CSV and only log to Sheets
 
