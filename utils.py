@@ -4,8 +4,7 @@ import json
 import pandas as pd
 import requests
 from datetime import datetime, timezone
-from config import REQUEST_TIMEOUT, LOG_FILE, API_CALL_LIMIT, CANDLE_LIMIT, LAST_SIGNALS_FILE
-from sheets_logger import append_row_with_headers
+from config import REQUEST_TIMEOUT, LOG_FILE, API_CALL_LIMIT, CANDLE_LIMIT, LAST_SIGNALS_FILE, RUN_STATE_FILE
 
 BINANCE_BASE_URL = os.getenv("BINANCE_BASE_URL", "https://data-api.binance.vision")
 
@@ -33,7 +32,12 @@ def fetch_binance_klines(symbol: str, interval: str, limit: int = 500) -> pd.Dat
         log_error(f"API call limit reached ({API_CALLS}/{API_CALL_LIMIT}) - skipping fetch for {symbol}")
         return pd.DataFrame(columns=["timestamp", "open", "high", "low", "close", "volume"])
 
-    req_limit = min(int(limit), int(CANDLE_LIMIT))
+    # enforce candle limit
+    try:
+        req_limit = min(int(limit), int(CANDLE_LIMIT))
+    except Exception:
+        req_limit = int(CANDLE_LIMIT)
+
     url = f"{BINANCE_BASE_URL}/api/v3/klines"
     params = {"symbol": symbol, "interval": interval, "limit": req_limit}
     try:
@@ -54,21 +58,6 @@ def fetch_binance_klines(symbol: str, interval: str, limit: int = 500) -> pd.Dat
         log_error(f"fetch_binance_klines failed for {symbol} interval {interval}: {repr(e)}")
         return pd.DataFrame(columns=["timestamp", "open", "high", "low", "close", "volume"])
 
-def append_journal(path: str, record: dict):
-    """Legacy CSV write."""
-    try:
-        df = pd.DataFrame([record])
-        write_header = not os.path.exists(path)
-        df.to_csv(path, mode="a", header=write_header, index=False)
-    except Exception as e:
-        log_error(f"append_journal error: {repr(e)}")
-
-def append_to_sheets_only(record: dict):
-    try:
-        append_row_with_headers(record)
-    except Exception as e:
-        log_error(f"append_to_sheets_only error: {repr(e)}")
-
 def log_error(msg: str):
     try:
         ts = datetime.now(timezone.utc).isoformat()
@@ -79,8 +68,23 @@ def log_error(msg: str):
         print("[CRITICAL] Failed to write log file:", LOG_FILE)
     print("[ERROR]", msg)
 
+def append_journal(path: str, record: dict):
+    """Legacy CSV write. Still available if you re-enable CSV journaling."""
+    try:
+        df = pd.DataFrame([record])
+        write_header = not os.path.exists(path)
+        df.to_csv(path, mode="a", header=write_header, index=False)
+    except Exception as e:
+        log_error(f"append_journal error: {repr(e)}")
+
+# -------------------------
 # prev signal persistence
+# -------------------------
 def get_prev_signal(symbol: str):
+    """
+    Return the last saved signal record for symbol as dict or None.
+    Format: {"symbol":..., "signal":..., "checked_at_utc":...}
+    """
     if not os.path.exists(LAST_SIGNALS_FILE):
         return None
     try:
@@ -89,21 +93,55 @@ def get_prev_signal(symbol: str):
         if df.empty:
             return None
         row = df.iloc[-1].to_dict()
-        return {"symbol": row.get("symbol"), "signal": row.get("signal"), "checked_at_utc": row.get("checked_at_utc")}
+        return {
+            "symbol": row.get("symbol"),
+            "signal": row.get("signal"),
+            "checked_at_utc": row.get("checked_at_utc")
+        }
     except Exception as e:
         log_error(f"get_prev_signal error: {repr(e)}")
         return None
 
 def update_prev_signal(symbol: str, rec: dict):
+    """
+    rec should contain at least {"signal":..., "checked_at_utc":...}
+    Stores a small CSV with last signals per symbol (one row per symbol).
+    """
     try:
         now = datetime.now(timezone.utc).isoformat()
-        record = {"symbol": symbol, "signal": rec.get("signal"), "checked_at_utc": rec.get("checked_at_utc", now)}
+        record = {
+            "symbol": symbol,
+            "signal": rec.get("signal"),
+            "checked_at_utc": rec.get("checked_at_utc", now)
+        }
         if not os.path.exists(LAST_SIGNALS_FILE):
             pd.DataFrame([record]).to_csv(LAST_SIGNALS_FILE, index=False)
             return
         df = pd.read_csv(LAST_SIGNALS_FILE)
+        # remove old row for symbol, append new
         df = df[df["symbol"].astype(str).str.upper() != symbol.upper()]
         df = pd.concat([df, pd.DataFrame([record])], ignore_index=True)
         df.to_csv(LAST_SIGNALS_FILE, index=False)
     except Exception as e:
         log_error(f"update_prev_signal error: {repr(e)}")
+
+# -------------------------
+# run-state persistence (resume capability)
+# -------------------------
+def load_run_state():
+    if not os.path.exists(RUN_STATE_FILE):
+        return {}
+    try:
+        with open(RUN_STATE_FILE, "r") as f:
+            return json.load(f)
+    except Exception as e:
+        log_error(f"load_run_state error: {repr(e)}")
+        return {}
+
+def save_run_state(state: dict):
+    try:
+        with open(RUN_STATE_FILE, "w") as f:
+            json.dump(state, f)
+    except Exception as e:
+        log_error(f"save_run_state error: {repr(e)}")
+
