@@ -1,6 +1,7 @@
 # sheets_logger.py
 import os
 import json
+import time
 import gspread
 from google.oauth2 import service_account
 from typing import List, Tuple, Dict
@@ -21,6 +22,10 @@ COLUMNS = HEADERS
 SHEET_ID = os.getenv("GOOGLE_SHEET_ID")
 SERVICE_JSON = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
 
+# small retry settings for Sheets rate-limit responses
+_SHEETS_MAX_RETRIES = 3
+_SHEETS_RETRY_BACKOFF = 2  # seconds (exponential backoff multiplier)
+
 def _get_creds():
     if not SERVICE_JSON:
         raise RuntimeError("GOOGLE_SERVICE_ACCOUNT_JSON not set in environment.")
@@ -39,25 +44,59 @@ def _get_sheet():
     return sheet
 
 def ensure_headers():
-    sheet = _get_sheet()
-    existing = sheet.row_values(1)
-    if existing != HEADERS:
+    """
+    Ensure the sheet's first row equals HEADERS. If mismatch, replace it.
+    This prevents column drift.
+    """
+    for attempt in range(_SHEETS_MAX_RETRIES):
         try:
-            if len(existing) >= 1:
-                sheet.delete_rows(1)
-        except Exception:
-            pass
-        sheet.insert_row(HEADERS, index=1)
-        print("✅ Sheet headers re-written to canonical HEADERS.")
-    else:
-        print("✅ Sheet headers already aligned.")
+            sheet = _get_sheet()
+            existing = sheet.row_values(1)
+            if existing != HEADERS:
+                try:
+                    if len(existing) >= 1:
+                        sheet.delete_rows(1)
+                except Exception:
+                    pass
+                sheet.insert_row(HEADERS, index=1)
+                print("✅ Sheet headers re-written to canonical HEADERS.")
+            else:
+                print("✅ Sheet headers already aligned.")
+            return True
+        except Exception as e:
+            msg = str(e)
+            # detect rate limit
+            if "RATE_LIMIT" in msg.upper() or "QUOTA" in msg.upper() or "429" in msg:
+                wait = (_SHEETS_RETRY_BACKOFF ** attempt)
+                print(f"⚠️ Sheets API rate limit. Retry in {wait}s (attempt {attempt+1}).")
+                time.sleep(wait)
+                continue
+            raise
+    raise RuntimeError("Failed to ensure headers after retries due to Sheets API limits.")
 
 def append_row_with_headers(record: dict) -> bool:
-    sheet = _get_sheet()
-    ensure_headers()
-    row = [record.get(k, "") for k in HEADERS]
-    sheet.append_row(row, value_input_option="USER_ENTERED")
-    return True
+    """
+    Append a row to the sheet using HEADERS order. Missing keys are filled with "".
+    Retries on transient errors / rate limits.
+    """
+    for attempt in range(_SHEETS_MAX_RETRIES):
+        try:
+            sheet = _get_sheet()
+            ensure_headers()
+            row = [record.get(k, "") for k in HEADERS]
+            sheet.append_row(row, value_input_option="USER_ENTERED")
+            return True
+        except Exception as e:
+            msg = str(e)
+            if "RATE_LIMIT" in msg.upper() or "QUOTA" in msg.upper() or "429" in msg:
+                wait = (_SHEETS_RETRY_BACKOFF ** attempt)
+                print(f"⚠️ Sheets API rate limit. Retry in {wait}s (attempt {attempt+1}).")
+                time.sleep(wait)
+                continue
+            print(f"[ERROR] append_row_with_headers failed: {repr(e)}")
+            return False
+    print("[ERROR] append_row_with_headers exhausted retries due to Sheets API limits.")
+    return False
 
 def find_pending_records() -> List[Tuple[int, Dict]]:
     sheet = _get_sheet()
