@@ -1,13 +1,15 @@
 # config.py
 import os
 
-# Telegram (keep these env names)
+# Telegram
 TELEGRAM_ENABLED = True
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 # Coins to monitor
-COINS = [c.strip().replace('"', '').replace("'", '') for c in os.getenv("COINS", "SOLUSDT,ETHUSDT,BTCUSDT,XRPUSDT,DOGEUSDT").split(",")]
+COINS = [c.strip().replace('"', '').replace("'", '') for c in os.getenv(
+    "COINS", "SOLUSDT,ETHUSDT,BTCUSDT,XRPUSDT,DOGEUSDT"
+).split(",")]
 
 # Timeframes
 LTF_INTERVAL = os.getenv("LTF_INTERVAL", "15m")
@@ -26,7 +28,8 @@ RR_RATIO = float(os.getenv("RR_RATIO", 2.5))
 LOOKBACK_SL = int(os.getenv("LOOKBACK_SL", 10))
 
 # Operation
-CHECK_INTERVAL = int(os.getenv("CHECK_INTERVAL", 720))   # 12 minutes = 720s if needed
+# default to 4 hours (in seconds) if not otherwise set
+CHECK_INTERVAL = int(os.getenv("CHECK_INTERVAL", 4 * 60 * 60))
 JOURNAL_FILE = os.getenv("JOURNAL_FILE", "signals_journal.csv")
 LOG_FILE = os.getenv("LOG_FILE", "bot_errors.log")
 
@@ -36,7 +39,17 @@ GOOGLE_SERVICE_ACCOUNT_JSON = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
 
 # HTTP / timeout
 REQUEST_TIMEOUT = int(os.getenv("REQUEST_TIMEOUT", 10))
-LOG_FILE = "error.log"
+
+# Limits (new)
+API_CALL_LIMIT = int(os.getenv("API_CALL_LIMIT", 200))    # total Binance calls per run
+CANDLE_LIMIT = int(os.getenv("CANDLE_LIMIT", 300))      # max candles request
+RUNTIME_LIMIT_MINUTES = int(os.getenv("RUNTIME_LIMIT_MINUTES", 2))  # GitHub action runtime cap
+
+# Data collection mode: True -> only Google Sheets (no CSV/Telegram).
+COLLECTION_MODE = os.getenv("COLLECTION_MODE", "true").lower() in ("1", "true", "yes")
+
+# Local small cache for previous signals
+LAST_SIGNALS_FILE = os.getenv("LAST_SIGNALS_FILE", "prev_signals.csv")
 
 # Data collection mode: True -> only Google Sheets (no CSV/Telegram).
 # Keep this True while backtesting / collecting. Set False to re-enable CSV & Telegram.
