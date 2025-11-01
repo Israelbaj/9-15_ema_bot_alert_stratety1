@@ -1,6 +1,9 @@
+# main.py
 import time
+import os
 from datetime import datetime, timezone
 from strategy import check_strategy
+# from alert import send_telegram   # commented for collection mode (uncomment to re-enable)
 from utils import append_to_sheets_only, append_journal, log_error, API_CALLS, api_limit_reached
 from config import COINS, JOURNAL_FILE, COLLECTION_MODE, RUNTIME_LIMIT_MINUTES
 
@@ -10,38 +13,41 @@ def main():
     print(f"🕒 Run start: {datetime.now(timezone.utc).isoformat()} UTC")
     print(f"📊 Monitoring {len(COINS)} coins...\n")
 
-    total_found = 0
-
     for symbol in COINS:
+        # runtime cap
         elapsed = time.time() - start_ts
         if elapsed >= (int(RUNTIME_LIMIT_MINUTES) * 60):
-            print(f"⏱ Runtime limit reached ({elapsed:.1f}s) - stopping.")
+            print(f"⏱ Runtime limit reached ({elapsed:.1f}s) - stopping further checks.")
             break
 
+        # API cap
         if api_limit_reached():
-            print(f"🛑 API call limit reached — stopping. API calls so far: {API_CALLS}")
+            print(f"🛑 API call limit reached - stopping scanning. API calls so far: {API_CALLS}")
             break
 
         print(f"🔍 Checking {symbol}...")
         try:
-            signals = check_strategy(symbol)
-
-            if not signals:
-                print(f"😴 No new signals for {symbol}")
-                continue
-
-            for rec in signals:
-                append_to_sheets_only(rec)
-                total_found += 1
-                print(f"☁️ Logged {rec['signal']} crossover for {symbol} @ {rec['price']}")
+            result = check_strategy(symbol)
+            if result:
+                append_to_sheets_only(result)
+                print(f"☁️ Appended {result['signal']} for {symbol} to Google Sheet")
 
                 if not COLLECTION_MODE:
-                    append_journal(JOURNAL_FILE, rec)
+                    append_journal(JOURNAL_FILE, result)
+                    print(f"✅ Logged {result['signal']} for {symbol} to CSV")
+
+                # Telegram intentionally left commented for collection
+                # msg = f"📈 {symbol} - {result['signal']} @ {result['price']}"
+                # send_telegram(msg)
+
+            else:
+                print(f"😴 No valid signal for {symbol}")
 
         except Exception as e:
             log_error(f"main loop error on {symbol}: {repr(e)}")
 
-    print(f"\n✅ Scan complete — {total_found} total signals logged.\n")
+    print("\n✅ Scan complete — results saved (if any).\n")
 
 if __name__ == "__main__":
     main()
+
