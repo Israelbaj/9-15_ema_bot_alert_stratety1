@@ -1,12 +1,10 @@
 # sheets_logger.py
 import os
 import json
-import time
 import gspread
 from google.oauth2 import service_account
-from typing import List, Tuple, Dict, Optional
+from typing import List, Tuple, Dict
 
-# canonical headers
 HEADERS: List[str] = [
     "checked_at_utc","symbol","signal","price",
     "ema_fast_ltf","ema_slow_ltf","ema_fast_slope","ema_slow_slope",
@@ -20,116 +18,81 @@ HEADERS: List[str] = [
 
 COLUMNS = HEADERS
 
-SHEET_ID = os.getenv("GOOGLE_SHEET_ID")
-SERVICE_JSON = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
-
-# cached sheet client + worksheet for the run (minimizes read calls)
-_SHEET = None
-_CREDS = None
-_LAST_HEADER_CHECK = 0
-
-# sheet op counters (module-level)
-SHEET_OPS = 0
+SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
+SERVICE_JSON = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON", "")
 
 def _get_creds():
-    global _CREDS
-    if _CREDS:
-        return _CREDS
     if not SERVICE_JSON:
         raise RuntimeError("GOOGLE_SERVICE_ACCOUNT_JSON not set in environment.")
     creds_dict = json.loads(SERVICE_JSON)
     creds = service_account.Credentials.from_service_account_info(
         creds_dict, scopes=["https://www.googleapis.com/auth/spreadsheets"]
     )
-    _CREDS = creds
     return creds
 
 def _get_sheet():
-    """
-    Return cached sheet object (sheet1). Minimize calls to Google's API.
-    """
-    global _SHEET
-    if _SHEET is not None:
-        return _SHEET
     if not SHEET_ID:
         raise RuntimeError("GOOGLE_SHEET_ID not set in environment.")
     creds = _get_creds()
     client = gspread.authorize(creds)
-    sp = client.open_by_key(SHEET_ID)
-    _SHEET = sp.sheet1
-    return _SHEET
+    sheet = client.open_by_key(SHEET_ID).sheet1
+    return sheet
 
-def ensure_headers(force: bool = False):
+def ensure_headers(sheet=None):
     """
-    Ensure first row equals HEADERS. If mismatch or forced, rewrite header row.
-    Minimizes read calls by caching last check for 30s.
+    Ensure the first row equals HEADERS. If mismatch, replace header row.
+    Use a provided sheet object to avoid repeated auth calls.
     """
-    global _LAST_HEADER_CHECK, SHEET_OPS
-    now = time.time()
-    if not force and (now - _LAST_HEADER_CHECK) < 30:
-        return
-    sheet = _get_sheet()
-    existing = sheet.row_values(1)
-    SHEET_OPS += 1
+    local = sheet or _get_sheet()
+    existing = local.row_values(1)
     if existing != HEADERS:
         try:
             if len(existing) >= 1:
-                sheet.delete_rows(1)
-            sheet.insert_row(HEADERS, index=1)
-            SHEET_OPS += 2
-            print("✅ Sheet headers re-written to canonical HEADERS.")
-        except Exception as e:
-            print("⚠️ Failed to rewrite headers:", e)
-            raise
+                local.delete_rows(1)
+        except Exception:
+            pass
+        local.insert_row(HEADERS, index=1)
+        print("✅ Sheet headers re-written to canonical HEADERS.")
     else:
         print("✅ Sheet headers already aligned.")
-    _LAST_HEADER_CHECK = time.time()
 
-def append_row_with_headers(record: dict) -> bool:
+def append_row_with_headers(record: dict, sheet=None) -> bool:
     """
-    Append a single row in HEADERS order.
+    Append a single row aligning to HEADERS. Allows passing sheet to avoid repeated connection.
     """
-    sheet = _get_sheet()
-    ensure_headers()
+    local = sheet or _get_sheet()
+    ensure_headers(local)
     row = [record.get(k, "") for k in HEADERS]
-    sheet.append_row(row, value_input_option="USER_ENTERED")  # one API write
-    global SHEET_OPS
-    SHEET_OPS += 1
+    local.append_row(row, value_input_option="USER_ENTERED")
     return True
 
-def append_rows_with_headers(records: List[dict]) -> bool:
+def append_rows_with_headers(records: list, sheet=None) -> bool:
     """
-    Append multiple rows as a single batch (sheet.append_rows).
-    Each row will be in HEADERS order. This uses fewer requests.
+    Append multiple rows in one batch (reduce requests).
+    Each record is a dict; missing keys filled with "".
     """
     if not records:
+        return False
+    local = sheet or _get_sheet()
+    ensure_headers(local)
+    rows = [[rec.get(k, "") for k in HEADERS] for rec in records]
+    # append_rows uses one request (batch) when available
+    try:
+        local.append_rows(rows, value_input_option="USER_ENTERED")
         return True
-    sheet = _get_sheet()
-    ensure_headers()
-    rows = [[r.get(k, "") for k in HEADERS] for r in records]
-    # append_rows performs fewer requests vs many append_row
-    sheet.append_rows(rows, value_input_option="USER_ENTERED")
-    global SHEET_OPS
-    SHEET_OPS += 1
-    return True
+    except Exception:
+        # fallback to per-row append
+        for r in rows:
+            local.append_row(r, value_input_option="USER_ENTERED")
+        return True
 
-def get_all_records():
+def find_pending_records(sheet=None) -> List[Tuple[int, Dict]]:
     """
-    Return list of dicts (gspread get_all_records).
-    WARNING: this is a read API call; caller should be careful and throttle.
+    Returns list of (row_index, record_dict) where status != 'analyzed' or pct_increase blank.
     """
-    sheet = _get_sheet()
-    global SHEET_OPS
-    SHEET_OPS += 1
-    return sheet.get_all_records()
-
-def find_pending_records() -> List[Tuple[int, Dict]]:
-    """
-    Return list of (row_index, record_dict) for rows that need post-analysis.
-    Criteria: status not 'analyzed' or pct_increase blank.
-    """
-    ensure_headers()
-    all_records = get_all_records()
+    local = sheet or _get_sheet()
+    ensure_headers(local)
+    all_records = local.get_all_records()
     pending = []
     for i, rec in enumerate(all_records, start=2):
         status = (rec.get("status") or "").strip().lower()
@@ -138,15 +101,13 @@ def find_pending_records() -> List[Tuple[int, Dict]]:
             pending.append((i, rec))
     return pending
 
-def update_cells_by_header(row_idx: int, updates: dict) -> bool:
+def update_cells_by_header(row_idx: int, updates: dict, sheet=None):
     """
-    Batch-update cells on a single row using header mapping.
+    Update multiple cells on row row_idx using HEADERS to map header->col index.
     """
-    sheet = _get_sheet()
-    ensure_headers()
-    header_row = sheet.row_values(1)
-    global SHEET_OPS
-    SHEET_OPS += 1
+    local = sheet or _get_sheet()
+    ensure_headers(local)
+    header_row = local.row_values(1)
     to_write = []
     for k, v in updates.items():
         if k not in header_row:
@@ -156,19 +117,9 @@ def update_cells_by_header(row_idx: int, updates: dict) -> bool:
         to_write.append(((row_idx, col_idx), v))
     if not to_write:
         return False
-    cell_list = [gspread.Cell(r, c, val) for (r, c), val in to_write]
-    sheet.update_cells(cell_list, value_input_option="USER_ENTERED")
-    SHEET_OPS += 1
+    cell_list = []
+    for (r, c), val in to_write:
+        cell_list.append(gspread.Cell(r, c, val))
+    local.update_cells(cell_list, value_input_option="USER_ENTERED")
     return True
-
-def find_latest_signal_row(symbol: str) -> Optional[int]:
-    """
-    Return last row number for symbol or None. Uses get_all_records (read).
-    """
-    vals = get_all_records()
-    last_row = None
-    for i, rec in enumerate(vals, start=2):
-        if (rec.get("symbol") or "").strip().upper() == symbol.strip().upper():
-            last_row = i
-    return last_row
 
