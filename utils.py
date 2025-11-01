@@ -4,13 +4,12 @@ import json
 import pandas as pd
 import requests
 from datetime import datetime, timezone
-from config import REQUEST_TIMEOUT, LOG_FILE, API_CALL_LIMIT, CANDLE_LIMIT, LAST_SIGNALS_FILE
-from sheets_logger import append_row_with_headers
+from config import REQUEST_TIMEOUT, LOG_FILE, API_CALL_LIMIT, CANDLE_LIMIT, LAST_SIGNALS_FILE, STATE_FILE
+from sheets_logger import append_row_with_headers, append_rows_with_headers
 
 BINANCE_BASE_URL = os.getenv("BINANCE_BASE_URL", "https://data-api.binance.vision")
 
-# module-level API counter (per-run)
-API_CALLS = 0
+API_CALLS = 0  # module-level counter
 
 def _inc_api_call():
     global API_CALLS
@@ -28,7 +27,6 @@ def fetch_binance_klines(symbol: str, interval: str, limit: int = 500) -> pd.Dat
     if api_limit_reached():
         log_error(f"API call limit reached ({API_CALLS}/{API_CALL_LIMIT}) - skipping fetch for {symbol}")
         return pd.DataFrame(columns=["timestamp", "open", "high", "low", "close", "volume"])
-
     req_limit = min(int(limit), int(CANDLE_LIMIT))
     url = f"{BINANCE_BASE_URL}/api/v3/klines"
     params = {"symbol": symbol, "interval": interval, "limit": req_limit}
@@ -61,8 +59,18 @@ def append_journal(path: str, record: dict):
 def append_to_sheets_only(record: dict):
     try:
         append_row_with_headers(record)
+        return True
     except Exception as e:
         log_error(f"append_to_sheets_only error: {repr(e)}")
+        return False
+
+def append_many_to_sheets(records: list):
+    try:
+        append_rows_with_headers(records)
+        return True
+    except Exception as e:
+        log_error(f"append_many_to_sheets error: {repr(e)}")
+        return False
 
 def log_error(msg: str):
     try:
@@ -75,7 +83,7 @@ def log_error(msg: str):
     print("[ERROR]", msg)
 
 # -------------------------
-# prev signal persistence (local small CSV)
+# prev-signal persistence (small CSV per-run)
 # -------------------------
 def get_prev_signal(symbol: str):
     if not os.path.exists(LAST_SIGNALS_FILE):
@@ -112,5 +120,4 @@ def update_prev_signal(symbol: str, rec: dict):
         df.to_csv(LAST_SIGNALS_FILE, index=False)
     except Exception as e:
         log_error(f"update_prev_signal error: {repr(e)}")
-
 
