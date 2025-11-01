@@ -144,4 +144,3 @@ def save_run_state(state: dict):
             json.dump(state, f)
     except Exception as e:
         log_error(f"save_run_state error: {repr(e)}")
-
