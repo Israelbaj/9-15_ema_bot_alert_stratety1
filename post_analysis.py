@@ -1,23 +1,19 @@
 # post_analysis.py
 import pandas as pd
 from datetime import datetime, timezone
-from sheets_logger import _get_sheet, find_pending_records, update_cells_by_header, SHEET_OPS
+from sheets_logger import _get_sheet, find_pending_records, update_cells_by_header
 from utils import fetch_binance_klines, log_error, API_CALLS, api_limit_reached
-from config import CANDLE_LIMIT
+import time
 
 def analyze_pending():
-    try:
-        pending = find_pending_records()
-    except Exception as e:
-        log_error(f"Failed to retrieve pending rows: {repr(e)}")
-        return
-
+    sheet = _get_sheet()
+    pending = find_pending_records(sheet)
     if not pending:
         print("No pending records to analyze.")
         return
 
-    all_records = _get_sheet().get_all_records()  # small read to build index
-    # build map per symbol
+    # Build list of rows per symbol for next-signal detection
+    all_records = sheet.get_all_records()
     symbol_rows = {}
     for idx, rec in enumerate(all_records, start=2):
         sym = (rec.get("symbol") or "").strip().upper()
@@ -26,7 +22,7 @@ def analyze_pending():
 
     for row_idx, rec in pending:
         if api_limit_reached():
-            print(f"🛑 Binance API limit reached ({API_CALLS}) - stopping post-analysis.")
+            print(f"API call limit reached ({API_CALLS}) - stopping post-analysis.")
             break
 
         try:
@@ -34,11 +30,12 @@ def analyze_pending():
             checked_at = rec.get("checked_at_utc")
             signal_type = (rec.get("signal") or "").upper()
             entry_price = float(rec.get("price") or 0.0)
+
             if not symbol or not checked_at:
                 print(f"Skipping row {row_idx}: missing symbol/checked_at.")
                 continue
 
-            # find next signal for this symbol
+            # find next signal row (first later row for same symbol)
             next_row = None
             rows_for_symbol = symbol_rows.get(symbol, [])
             for idx, r in rows_for_symbol:
@@ -48,10 +45,16 @@ def analyze_pending():
                 break
 
             start_ts = pd.to_datetime(checked_at)
-            end_ts = pd.Timestamp.utcnow() if not next_row else pd.to_datetime(next_row[1].get("checked_at_utc"))
+            if next_row:
+                try:
+                    end_ts = pd.to_datetime(next_row[1].get("checked_at_utc"))
+                except Exception:
+                    end_ts = pd.Timestamp.utcnow()
+            else:
+                end_ts = pd.Timestamp.utcnow()
 
-            # fetch candles (bounded by CANDLE_LIMIT)
-            df = fetch_binance_klines(symbol, interval="15m", limit=int(CANDLE_LIMIT))
+            # fetch candles (limit respected inside util)
+            df = fetch_binance_klines(symbol, interval="15m", limit=300)
             if df.empty:
                 print(f"No price data for {symbol} to analyze.")
                 continue
@@ -85,7 +88,7 @@ def analyze_pending():
                 "status": "analyzed"
             }
 
-            ok = update_cells_by_header(row_idx, updates)
+            ok = update_cells_by_header(row_idx, updates, sheet)
             if ok:
                 print(f"Updated analysis for {symbol} (row {row_idx}).")
             else:
@@ -96,4 +99,3 @@ def analyze_pending():
 
 if __name__ == "__main__":
     analyze_pending()
-
