@@ -1,9 +1,9 @@
+# .github/workflows/ema_adx_collect.yml
 name: EMA+ADX Multi-Coin Scanner + Post-Analysis
 
 on:
   schedule:
-    # every 4 hours (UTC)
-    - cron: '0 */4 * * *'
+    - cron: "0 */4 * * *"  # every 4 hours at minute 0
   workflow_dispatch:
 
 permissions:
@@ -17,7 +17,7 @@ concurrency:
 jobs:
   run-bot:
     runs-on: ubuntu-latest
-    timeout-minutes: 2  # enforce 2 minute limit per run
+    timeout-minutes: 3  # fail-safe; job times out quickly if something hangs
 
     steps:
       - name: Checkout repository
@@ -38,7 +38,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
+          pip install --upgrade pip
           pip install -r requirements.txt
 
       - name: Ensure logs folder exists
@@ -46,34 +46,37 @@ jobs:
           mkdir -p logs
           echo "✅ Logs folder ensured."
 
-      - name: Run EMA+ADX Bot (signal detection)
+      - name: Run EMA+ADX Bot
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
           GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
+          API_CALL_LIMIT: ${{ secrets.API_CALL_LIMIT }}
+          CANDLE_LIMIT: ${{ secrets.CANDLE_LIMIT }}
+          RUNTIME_LIMIT_MINUTES: ${{ secrets.RUNTIME_LIMIT_MINUTES }}
         run: |
           echo "🚀 Running main.py (signal detection)..."
           python main.py
 
-      - name: Run post-analysis (metrics update)
+      - name: Run post-analysis
         env:
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
           GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
+          API_CALL_LIMIT: ${{ secrets.API_CALL_LIMIT }}
+          CANDLE_LIMIT: ${{ secrets.CANDLE_LIMIT }}
         run: |
           echo "🔍 Running post_analysis.py (metrics update)..."
           python post_analysis.py
 
-      - name: Commit and push results (if any)
-        if: success() || failure()
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Commit and push results (optional - only if you want CSV/logs pushed)
+        if: always()
         run: |
+          echo "🧾 Commit step: (kept minimal)"
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git add signals_journal.csv logs/ || true
           git diff --cached --quiet || (
-            git commit -m "📊 Auto-update: signals + post-analysis metrics"
-            git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }} main
-            echo "✅ CSV and logs pushed successfully."
-          ) || echo "🫡 No new changes to commit — skipping push."
+            git commit -m "📊 Auto-update: signals + post-analysis metrics" || true
+            git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }} main || true
+          )
