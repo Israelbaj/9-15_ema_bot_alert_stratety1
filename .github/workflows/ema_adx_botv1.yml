@@ -2,7 +2,7 @@ name: EMA+ADX Multi-Coin Scanner + Post-Analysis
 
 on:
   schedule:
-    - cron: "*/12 * * * *"  # every 12 minutes
+    - cron: "0 */4 * * *"   # every 4 hours
   workflow_dispatch:
 
 permissions:
@@ -16,18 +16,18 @@ concurrency:
 jobs:
   run-bot:
     runs-on: ubuntu-latest
-    timeout-minutes: 0.7  # ~40 seconds
+    timeout-minutes: 2   # keep runtime below ~2 minutes
 
     steps:
-      - name: 🛒 Checkout repository
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: 🐍 Setup Python
+      - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      - name: 💾 Cache pip dependencies
+      - name: Cache pip dependencies
         uses: actions/cache@v4
         with:
           path: ~/.cache/pip
@@ -35,35 +35,41 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-pip-
 
-      - name: 📦 Install dependencies
+      - name: Install dependencies
         run: |
           pip install uv
           uv pip install --system -r requirements.txt
 
-      - name: 🗂 Ensure logs folder exists
+      - name: Ensure logs folder exists
         run: |
           mkdir -p logs
           echo "✅ Logs folder ensured."
 
-      - name: 🚀 Run EMA+ADX Bot
+      - name: Run EMA+ADX Bot (signal detection)
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
           GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
+          API_CALL_LIMIT: ${{ secrets.API_CALL_LIMIT }}       # optional override secret
+          CANDLE_LIMIT: ${{ secrets.CANDLE_LIMIT }}           # optional override secret
+          RUNTIME_LIMIT_MINUTES: ${{ secrets.RUNTIME_LIMIT_MINUTES }}
         run: |
           echo "🚀 Running main.py (signal detection)..."
           python main.py
 
-      - name: 📈 Run post-analysis
+      - name: Run post-analysis (metrics update)
         env:
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
           GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
+          API_CALL_LIMIT: ${{ secrets.API_CALL_LIMIT }}
+          CANDLE_LIMIT: ${{ secrets.CANDLE_LIMIT }}
+          RUNTIME_LIMIT_MINUTES: ${{ secrets.RUNTIME_LIMIT_MINUTES }}
         run: |
           echo "🔍 Running post_analysis.py (metrics update)..."
           python post_analysis.py
 
-      - name: 🧾 Commit and push results
+      - name: Commit and push results
         if: success() || failure()
         run: |
           echo "🧾 Checking for updated CSV/logs..."
@@ -75,4 +81,3 @@ jobs:
             git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }} main
             echo "✅ CSV and logs pushed successfully."
           ) || echo "🫡 No new changes to commit — skipping push."
-
