@@ -1,21 +1,17 @@
-# EMA+ADX Multi-Coin Telegram Bot
+# EMA+ADX Multi-Coin Scanner — Safe-Run Collection Mode
 
-## Description
-This bot monitors multiple cryptocurrencies (BTC, ETH, SOL, XRP, DOGE) on Binance using a dual-timeframe EMA+ADX strategy and sends Telegram alerts when trade conditions are met.
+## What it does
+- Detects 9/15 EMA crossovers on 15m LTF, collects lots of metrics (ADX, RSI, ATR, volume, HTF EMAs).
+- Appends signals to a canonical Google Sheet and then runs post-analysis to compute trade metrics (best open price, max movement, trade_time, pct_increase).
+- Safe-run design: enforces Binance API call limits and Google Sheets quota; saves run-state and exits gracefully when approaching limits.
 
-## Strategy Logic
-- 15-min chart for trade signals
-- 1-hour chart for trend alignment
-- Entry when:
-  - 9 EMA crosses 15 EMA (LTF)
-  - ADX ≥ 18
-  - 1H EMA alignment confirms trend direction
+## Quick setup
+- Add `GOOGLE_SERVICE_ACCOUNT_JSON` and `GOOGLE_SHEET_ID` to repo secrets.
+- Optionally set `COINS` secret (comma-separated), otherwise defaults used.
+- Set `RUNTIME_LIMIT_MINUTES`, `API_CALL_LIMIT`, `CANDLE_LIMIT` in workflow env as needed.
 
-## Files
-- **main.py** — main loop, journaling, alerts
-- **config.py** — parameters and settings
-- **strategy.py** — EMA/ADX logic
-- **utils.py** — data fetch + indicator math
-- **alert.py** — Telegram notification logic
+## Re-enable alerts / CSV
+- In `main.py` uncomment `send_telegram` lines and call to `append_journal(...)` as desired.
 
-## Run
+## Note on quotas
+- Google Sheets has hard read/write quotas. This workflow reduces reads/writes and batches them but may still hit quotas if you append many rows in a single run.
