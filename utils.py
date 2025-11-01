@@ -34,7 +34,11 @@ def fetch_binance_klines(symbol: str, interval: str, limit: int = 500) -> pd.Dat
         return pd.DataFrame(columns=["timestamp", "open", "high", "low", "close", "volume"])
 
     # enforce candle limit
-    req_limit = min(int(limit), int(CANDLE_LIMIT))
+    try:
+        req_limit = min(int(limit), int(CANDLE_LIMIT))
+    except Exception:
+        req_limit = int(CANDLE_LIMIT)
+
     url = f"{BINANCE_BASE_URL}/api/v3/klines"
     params = {"symbol": symbol, "interval": interval, "limit": req_limit}
     try:
@@ -50,13 +54,14 @@ def fetch_binance_klines(symbol: str, interval: str, limit: int = 500) -> pd.Dat
         df["timestamp"] = pd.to_datetime(df["open_time"], unit="ms", utc=True)
         for c in ["open", "high", "low", "close", "volume"]:
             df[c] = pd.to_numeric(df[c], errors="coerce")
+        # keep essential columns and use canonical names
         return df[["timestamp", "open", "high", "low", "close", "volume"]]
     except Exception as e:
         log_error(f"fetch_binance_klines failed for {symbol} interval {interval}: {repr(e)}")
         return pd.DataFrame(columns=["timestamp", "open", "high", "low", "close", "volume"])
 
 def append_journal(path: str, record: dict):
-    """Legacy CSV write, still available if re-enabled."""
+    """Legacy CSV write. Still available if re-enabled."""
     try:
         df = pd.DataFrame([record])
         write_header = not os.path.exists(path)
@@ -97,7 +102,6 @@ def get_prev_signal(symbol: str):
         if df.empty:
             return None
         row = df.iloc[-1].to_dict()
-        # normalize keys
         return {
             "symbol": row.get("symbol"),
             "signal": row.get("signal"),
