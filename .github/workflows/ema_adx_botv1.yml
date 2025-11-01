@@ -2,7 +2,8 @@ name: EMA+ADX Multi-Coin Scanner + Post-Analysis
 
 on:
   schedule:
-    - cron: "0 */4 * * *"   # every 4 hours
+    # every 4 hours (UTC)
+    - cron: '0 */4 * * *'
   workflow_dispatch:
 
 permissions:
@@ -16,7 +17,7 @@ concurrency:
 jobs:
   run-bot:
     runs-on: ubuntu-latest
-    timeout-minutes: 2   # keep runtime below ~2 minutes
+    timeout-minutes: 2  # enforce 2 minute limit per run
 
     steps:
       - name: Checkout repository
@@ -37,8 +38,8 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install uv
-          uv pip install --system -r requirements.txt
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
 
       - name: Ensure logs folder exists
         run: |
@@ -51,9 +52,6 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
           GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
-          API_CALL_LIMIT: 200       # optional override secret
-          CANDLE_LIMIT: 300          # optional override secret
-          RUNTIME_LIMIT_MINUTES: 2
         run: |
           echo "🚀 Running main.py (signal detection)..."
           python main.py
@@ -62,17 +60,15 @@ jobs:
         env:
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
           GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
-          API_CALL_LIMIT: ${{ secrets.API_CALL_LIMIT }}
-          CANDLE_LIMIT: ${{ secrets.CANDLE_LIMIT }}
-          RUNTIME_LIMIT_MINUTES: ${{ secrets.RUNTIME_LIMIT_MINUTES }}
         run: |
           echo "🔍 Running post_analysis.py (metrics update)..."
           python post_analysis.py
 
-      - name: Commit and push results
+      - name: Commit and push results (if any)
         if: success() || failure()
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "🧾 Checking for updated CSV/logs..."
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git add signals_journal.csv logs/ || true
