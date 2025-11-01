@@ -41,7 +41,8 @@ GOOGLE_SERVICE_ACCOUNT_JSON = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
 REQUEST_TIMEOUT = int(os.getenv("REQUEST_TIMEOUT", 10))
 
 # Limits (new)
-API_CALL_LIMIT = int(os.getenv("API_CALL_LIMIT", 200))    # total Binance calls per run
+API_CALL_LIMIT = API_CALL_LIMIT = int(os.getenv("API_CALL_LIMIT") or 200)
+   # total Binance calls per run
 CANDLE_LIMIT = int(os.getenv("CANDLE_LIMIT", 300))      # max candles request
 RUNTIME_LIMIT_MINUTES = int(os.getenv("RUNTIME_LIMIT_MINUTES", 2))  # GitHub action runtime cap
 
