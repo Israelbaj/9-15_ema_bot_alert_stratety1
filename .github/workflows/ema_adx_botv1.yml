@@ -51,9 +51,9 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
           GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
-          API_CALL_LIMIT: ${{ secrets.API_CALL_LIMIT }}       # optional override secret
-          CANDLE_LIMIT: ${{ secrets.CANDLE_LIMIT }}           # optional override secret
-          RUNTIME_LIMIT_MINUTES: ${{ secrets.RUNTIME_LIMIT_MINUTES }}
+          API_CALL_LIMIT: 200       # optional override secret
+          CANDLE_LIMIT: 300          # optional override secret
+          RUNTIME_LIMIT_MINUTES: 2
         run: |
           echo "🚀 Running main.py (signal detection)..."
           python main.py
