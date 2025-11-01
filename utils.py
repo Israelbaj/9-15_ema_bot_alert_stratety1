@@ -9,7 +9,7 @@ from sheets_logger import append_row_with_headers
 
 BINANCE_BASE_URL = os.getenv("BINANCE_BASE_URL", "https://data-api.binance.vision")
 
-# module-level API counter for this process run
+# module-level API counter (per-run)
 API_CALLS = 0
 
 def _inc_api_call():
@@ -24,21 +24,12 @@ def api_limit_reached():
         return False
 
 def fetch_binance_klines(symbol: str, interval: str, limit: int = 500) -> pd.DataFrame:
-    """
-    Fetch Binance klines with API call counting and candle limit enforcement.
-    If API_CALL_LIMIT reached, returns empty DataFrame.
-    """
     global API_CALLS
     if api_limit_reached():
         log_error(f"API call limit reached ({API_CALLS}/{API_CALL_LIMIT}) - skipping fetch for {symbol}")
         return pd.DataFrame(columns=["timestamp", "open", "high", "low", "close", "volume"])
 
-    # enforce candle limit
-    try:
-        req_limit = min(int(limit), int(CANDLE_LIMIT))
-    except Exception:
-        req_limit = int(CANDLE_LIMIT)
-
+    req_limit = min(int(limit), int(CANDLE_LIMIT))
     url = f"{BINANCE_BASE_URL}/api/v3/klines"
     params = {"symbol": symbol, "interval": interval, "limit": req_limit}
     try:
@@ -54,14 +45,12 @@ def fetch_binance_klines(symbol: str, interval: str, limit: int = 500) -> pd.Dat
         df["timestamp"] = pd.to_datetime(df["open_time"], unit="ms", utc=True)
         for c in ["open", "high", "low", "close", "volume"]:
             df[c] = pd.to_numeric(df[c], errors="coerce")
-        # keep essential columns and use canonical names
         return df[["timestamp", "open", "high", "low", "close", "volume"]]
     except Exception as e:
         log_error(f"fetch_binance_klines failed for {symbol} interval {interval}: {repr(e)}")
         return pd.DataFrame(columns=["timestamp", "open", "high", "low", "close", "volume"])
 
 def append_journal(path: str, record: dict):
-    """Legacy CSV write. Still available if re-enabled."""
     try:
         df = pd.DataFrame([record])
         write_header = not os.path.exists(path)
@@ -70,7 +59,6 @@ def append_journal(path: str, record: dict):
         log_error(f"append_journal error: {repr(e)}")
 
 def append_to_sheets_only(record: dict):
-    """Append a single record to Google Sheets safely (header aligned)."""
     try:
         append_row_with_headers(record)
     except Exception as e:
@@ -87,13 +75,9 @@ def log_error(msg: str):
     print("[ERROR]", msg)
 
 # -------------------------
-# prev signal persistence
+# prev signal persistence (local small CSV)
 # -------------------------
 def get_prev_signal(symbol: str):
-    """
-    Return the last saved signal record for symbol as dict or None.
-    Format: {"symbol":..., "signal":..., "checked_at_utc":...}
-    """
     if not os.path.exists(LAST_SIGNALS_FILE):
         return None
     try:
@@ -112,10 +96,6 @@ def get_prev_signal(symbol: str):
         return None
 
 def update_prev_signal(symbol: str, rec: dict):
-    """
-    rec should contain at least {"signal":..., "checked_at_utc":...}
-    Stores a small CSV with last signals per symbol (one row per symbol).
-    """
     try:
         now = datetime.now(timezone.utc).isoformat()
         record = {
@@ -127,10 +107,10 @@ def update_prev_signal(symbol: str, rec: dict):
             pd.DataFrame([record]).to_csv(LAST_SIGNALS_FILE, index=False)
             return
         df = pd.read_csv(LAST_SIGNALS_FILE)
-        # remove old row for symbol, append new
         df = df[df["symbol"].astype(str).str.upper() != symbol.upper()]
         df = pd.concat([df, pd.DataFrame([record])], ignore_index=True)
         df.to_csv(LAST_SIGNALS_FILE, index=False)
     except Exception as e:
         log_error(f"update_prev_signal error: {repr(e)}")
+
 
