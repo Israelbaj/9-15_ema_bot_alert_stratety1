@@ -1,52 +1,52 @@
 # config.py
+# Minimal env usage: keep secrets in envs, but runtime/limits are fixed constants here
 import os
 
-# Telegram (keep these env names)
+# Telegram (keep these env names - set in GitHub Secrets)
 TELEGRAM_ENABLED = True
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-# Coins to monitor
-COINS = [
-    c.strip().replace('"', '').replace("'", '')
-    for c in os.getenv("COINS", "SOLUSDT,ETHUSDT,BTCUSDT,XRPUSDT,DOGEUSDT").split(",")
-]
+# Coins to monitor (CSV string in env or default list)
+COINS = [c.strip().replace('"', '').replace("'", '') for c in os.getenv(
+    "COINS", "SOLUSDT,ETHUSDT,BTCUSDT,XRPUSDT,DOGEUSDT"
+).split(",")]
 
 # Timeframes
-LTF_INTERVAL = os.getenv("LTF_INTERVAL", "15m")
-HTF_INTERVAL = os.getenv("HTF_INTERVAL", "1h")
+LTF_INTERVAL = "15m"
+HTF_INTERVAL = "1h"
 
-# Strategy parameters
-EMA_FAST = int(os.getenv("EMA_FAST") or 9)
-EMA_SLOW = int(os.getenv("EMA_SLOW") or 15)
-ADX_LEN = int(os.getenv("ADX_LEN") or 14)
-ADX_THRESHOLD = float(os.getenv("ADX_THRESHOLD") or 0.0)
-HTF_FACTOR = float(os.getenv("HTF_FACTOR") or 0.1)
+# Strategy params
+EMA_FAST = 9
+EMA_SLOW = 15
+ADX_LEN = 14
+ADX_THRESHOLD = 0     # relaxed for data collection
+HTF_FACTOR = 0.1      # relaxed for data collection
 
-# Risk / journal settings
-RISK_USD = float(os.getenv("RISK_USD") or 1.0)
-RR_RATIO = float(os.getenv("RR_RATIO") or 2.5)
-LOOKBACK_SL = int(os.getenv("LOOKBACK_SL") or 10)
+# Risk / journal
+RISK_USD = 1.0
+RR_RATIO = 2.5
+LOOKBACK_SL = 10
 
-# Operation intervals
-CHECK_INTERVAL = int(os.getenv("CHECK_INTERVAL") or 14400)  # 4 hours = 14400s
-JOURNAL_FILE = os.getenv("JOURNAL_FILE", "signals_journal.csv")
-LOG_FILE = os.getenv("LOG_FILE", "bot_errors.log")
+# Operation / Limits (embedded constants to avoid empty env parsing issues)
+# You can edit these values directly here
+API_CALL_LIMIT = 200        # total Binance HTTP calls per run
+CANDLE_LIMIT = 300          # max candles requested per klines call
+RUNTIME_LIMIT_MINUTES = 2   # stop scanning after this many minutes (GH Action runtime safeguard)
+CHECK_INTERVAL_SECONDS = 4 * 60 * 60  # 4 hours between scheduled runs (workflow scheduling controls this)
 
-# Google Sheets
+# Files & logs
+JOURNAL_FILE = "signals_journal.csv"
+LOG_FILE = "error.log"
+LAST_SIGNALS_FILE = "last_signals.csv"
+
+# Google Sheets (keep as secrets)
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID")
 GOOGLE_SERVICE_ACCOUNT_JSON = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
 
 # HTTP / timeout
-REQUEST_TIMEOUT = int(os.getenv("REQUEST_TIMEOUT") or 10)
+REQUEST_TIMEOUT = 10
 
-# API limits & candles
-API_CALL_LIMIT = int(os.getenv("API_CALL_LIMIT") or 200)  # total Binance calls per run
-CANDLE_LIMIT = int(os.getenv("CANDLE_LIMIT") or 300)      # max candles request
-# Runtime limit for GitHub Actions
-RUNTIME_LIMIT_MINUTES = int(os.getenv("RUNTIME_LIMIT_MINUTES") or 2) 
 # Data collection mode
-COLLECTION_MODE = True  # True = disable Telegram/CSV and only log to Sheets
+COLLECTION_MODE = True
 
-# Cache for previous signals
-LAST_SIGNALS_FILE = os.getenv("LAST_SIGNALS_FILE", "last_signals.json")
